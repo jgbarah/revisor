@@ -29,6 +29,9 @@ import urllib2
 import json
 import time
 
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy import Column, Integer, String, Boolean, Date
+
 description = """
 Simple script to retrieve data from Gerrit systems.
 
@@ -40,6 +43,36 @@ http://gerrit-review.googlesource.com/Documentation/dev-rest-api.html
 https://gerrit.wikimedia.org/r/Documentation/rest-api.html
 
 """
+
+Base = declarative_base()
+
+class Changes(Base):
+    """Table for changes.
+
+    Fields are those found for a change in the corresponding JSON document.
+
+    """
+
+    __tablename__ = "changes"
+
+    kind = Column(String(50))
+    id = Column(String(100), primary_key=True)
+    project = Column(String(50))
+    branch = Column(String(50))
+    topic = Column(Integer)
+    change_id = Column(String(50))
+    subject = Column(String(200))
+    status = Column(String(20))
+    created = Column(Date)
+    updated = Column(Date)
+    mergeable = Column(Boolean)
+    _sortkey = Column(String(20))
+    _number = Column(Integer)
+
+    def __repr__(self):
+        return "<Change(project='%s', change_id='%s', " + \
+            "status='%s', _number='%s'" % (
+            self.project, self.change_id, self.status, self._number)
 
 def parse_args ():
     """
@@ -83,6 +116,8 @@ def get_changes (status = "open", period = None):
         base = base + "+-age:" + str(period) + "day"
     base = base + "&n=300"
     all_changes = {}
+    session = Session()
+
     more = True
     url = base
     while more:
@@ -97,6 +132,22 @@ def get_changes (status = "open", period = None):
                 print "Repeated: " + id
             else:
                 all_changes[id] = change
+                change_record = Changes (
+                    kind = change["kind"],
+                    id = change["id"],
+                    project = change["project"],
+                    branch = change["branch"],
+                    change_id = change["change_id"],
+                    subject = change["subject"],
+                    status = change["status"],
+                    created = change["created"],
+                    updated = change["updated"],
+                    mergeable = change["mergeable"],
+                    _sortkey = change["_sortkey"],
+                    _number = change["_number"]
+                    )
+                session.add(change_record)
+                session.commit()
         if "_more_changes" in changes[-1]:
             more = changes[-1]["_more_changes"]
         else:
@@ -136,5 +187,16 @@ if __name__ == "__main__":
 
     args = parse_args()
     print args.url
+
+    from sqlalchemy import create_engine
+    engine = create_engine('mysql://jgb:XXX@localhost/revisor_test',
+                           echo=False)
+    
+    Base.metadata.drop_all(engine) 
+    Base.metadata.create_all(engine) 
+
+    from sqlalchemy.orm import sessionmaker
+    Session = sessionmaker(bind=engine)
+
     for status in ["open", "abandoned", "merged"]:
-        get_changes (status = status, period = 50)
+        get_changes (status = status, period = 1)
