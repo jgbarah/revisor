@@ -86,7 +86,8 @@ class Message(Base):
 
     __tablename__ = "messages"
 
-    id = Column(String(20), primary_key=True)
+    uid = Column(Integer, primary_key=True)
+    id = Column(String(20))
     date = Column(DateTime)
     change_id = Column(String(200), ForeignKey('changes.id'))
     _revision_number = Column(Integer)
@@ -136,12 +137,24 @@ def analyze_header (header):
     match = re.match (r'Uploaded patch set (\d*).$', header)
     if match:
         return ("Upload", int(match.group(1)))
-    match = re.match (r'Patch Set (\d*): .*Code-Review(..).*$', header)
+    match = re.match (r'Patch Set (\d*): .*Code-Review(.\d).*$', header)
     if match:
         return ("Review", int(match.group(2)))
     match = re.match (r'Patch Set (\d*): .*-Code-Review.*$', header)
     if match:
         return ("Review", 0)
+    match = re.match (r"Patch Set (\d*): Do not submit.*$", header)
+    if match:
+        return ("Review", -2)
+    match = re.match (r"Patch Set (\d*): There's a problem with.*$", header)
+    if match:
+        return ("Review", -1)
+    match = re.match (r"Patch Set (\d*): Looks good to me, but.*$", header)
+    if match:
+        return ("Review", 1)
+    match = re.match (r"Patch Set (\d*): Looks good to me, approved.*$", header)
+    if match:
+        return ("Review", 2)
     match = re.match (r'Patch Set (\d*): Verified(..)$', header)
     if match:
         return ("Verify", int(match.group(2)))
@@ -157,6 +170,24 @@ def analyze_header (header):
     match = re.match (r'Patch Set (\d*): Commit message was updated$', header)
     if match:
         return ("Update", None)
+    match = re.match (r'Patch Set (\d*): Cherry Picked.*$', header)
+    if match:
+        return ("Cherry", None)
+    match = re.match (r'Patch Set (\d*): Restored.*$', header)
+    if match:
+        return ("Restore", None)
+    match = re.match (r'Patch Set (\d*): Reverted.*$', header)
+    if match:
+        return ("Revert", None)
+    match = re.match (r'Topic(.*)$', header)
+    if match:
+        return ("Topic", None)
+    match = re.match (r'Change could not be merged(.*)$', header)
+    if match:
+        return ("Not merged", None)
+    match = re.match (r'Change cannot be merged(.*)$', header)
+    if match:
+        return ("Not merged", None)
     match = re.match (r'Patch Set (\d*).$', header)
     if match:
         return ("Comment", None)
@@ -190,8 +221,8 @@ def db_messages (message_list):
             action = action,
             value = value
             )
-        if action == "Unknown":
-            print "Unknown header: " + header + "."
+#        if action == "Unknown":
+#            print "Unknown header: " + header + "."
         message_records.append (message_record)
     return (message_records)
 
@@ -215,7 +246,7 @@ def db_revisions (revision_dict):
     for revision in revision_dict:
         revision_record = Revision (
             id = revision,
-            _number = message["_number"],
+            _number = revision_dict[revision]["_number"],
             )
         revision_records.append (revision_record)
     return (revision_records)
@@ -254,13 +285,14 @@ def db_change (change):
         _sortkey = change["_sortkey"],
         _number = change["_number"]
         )
-    print change["_number"]
+#    print change["_number"]
+    print ".",
     if "messages" in change:
         change_record.messages = db_messages (change["messages"])
-        print "Messages added: " + str (len (change_record.messages))
+#        print "Messages added: " + str (len (change_record.messages))
     if "revisions" in change:
         change_record.revisions = db_revisions (change["revisions"])
-        print "Revisions added: " + str (len (change_record.revisions))
+#        print "Revisions added: " + str (len (change_record.revisions))
     return change_record
             
 def get_changes (status = "open", period = None):
@@ -294,6 +326,7 @@ def get_changes (status = "open", period = None):
         base = base + "+-age:" + str(period) + "day"
     base = base + "&n=300"
     base = base + "&o=MESSAGES"
+    base = base + "&o=ALL_REVISIONS"
     all_changes = {}
     session = Session()
 
@@ -368,4 +401,4 @@ if __name__ == "__main__":
     Session = sessionmaker(bind=engine)
 
     for status in ["open", "abandoned", "merged"]:
-        get_changes (status = status, period = 1)
+        get_changes (status = status, period = 3000)
