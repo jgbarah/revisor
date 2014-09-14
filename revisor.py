@@ -29,6 +29,7 @@ import urllib2
 import json
 import time
 import re
+from datetime import datetime
 
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
@@ -57,14 +58,16 @@ class Change(Base):
 
     __tablename__ = "changes"
 
+    uid = Column(Integer, primary_key=True)
+    id = Column(String(300))
     kind = Column(String(50))
-    id = Column(String(200), primary_key=True)
     project = Column(String(100))
     branch = Column(String(50))
     topic = Column(String(50))
     change_id = Column(String(50))
     subject = Column(String(200))
     status = Column(String(20))
+    status_ret = Column(String(20))
     created = Column(DateTime)
     updated = Column(DateTime)
     mergeable = Column(Boolean)
@@ -89,7 +92,7 @@ class Message(Base):
     uid = Column(Integer, primary_key=True)
     id = Column(String(20))
     date = Column(DateTime)
-    change_id = Column(String(200), ForeignKey('changes.id'))
+    change_id = Column(Integer, ForeignKey('changes.uid'))
     _revision_number = Column(Integer)
     action = Column(String(10))
     value = Column(Integer)
@@ -107,12 +110,29 @@ class Revision(Base):
 
     __tablename__ = "revisions"
 
-    id = Column(String(50), primary_key=True)
+    uid = Column(Integer, primary_key=True)
+    id = Column(String(50))
     _number = Column(Integer)
-    change_id = Column(String(200), ForeignKey('changes.id'))
+    change_id = Column(Integer, ForeignKey('changes.uid'))
 
     change = relationship ("Change", backref=backref("revisions",
                                                      order_by = id))
+
+class Retrieving(Base):
+    """Table for last retrieved changes.
+
+    In this table, id is one of ["open", "abandoned", "merged"],
+    sortkey is the last sortkey to be retrieved for that type of
+    status, date is the last time recorded for changes with that status
+    (when those changes were to be retrieved).
+    If sortkey is NULL (None), retrieval for that type did finish.
+    """
+
+    __tablename__ = "retrieving"
+
+    id = Column(String(50), primary_key=True)
+    sortkey = Column(String(50))
+    date = Column(DateTime)
 
 def parse_args ():
     """
@@ -213,10 +233,14 @@ def db_messages (message_list):
     for message in message_list:
         header = message["message"].split('\n', 1)[0]
         (action, value) = analyze_header (header)
+        if "_revision_number" in message:
+            revision_number = message["_revision_number"]
+        else:
+            revision_number = 0
         message_record = Message (
             id = message["id"],
             date = message["date"],
-            _revision_number = message["_revision_number"],
+            _revision_number = revision_number,
             message = message["message"],
             action = action,
             value = value
@@ -251,7 +275,7 @@ def db_revisions (revision_dict):
         revision_records.append (revision_record)
     return (revision_records)
     
-def db_change (change):
+def db_change (change, status):
     """Produce change records (and related information).
 
     Parameters
@@ -259,7 +283,8 @@ def db_change (change):
 
     change: str
         Change dictionary as obtained form the Gerrit JSON document.
-
+    status: str
+        Status used for retrieving this change: ["open", "abandoned", "merged"]
     """
     
     if "topic" in change:
@@ -283,7 +308,8 @@ def db_change (change):
         updated = change["updated"],
         mergeable = mergeable,
         _sortkey = change["_sortkey"],
-        _number = change["_number"]
+        _number = change["_number"],
+        status_ret = status
         )
 #    print change["_number"]
     print ".",
@@ -344,9 +370,8 @@ def get_changes (status = "open", period = None):
                 print "Repeated: " + id
             else:
                 all_changes[id] = change
-                change_record = db_change (change)
+                change_record = db_change (change, status)
                 session.add(change_record)
-                session.commit()
         if "_more_changes" in changes[-1]:
             more = changes[-1]["_more_changes"]
         else:
@@ -354,7 +379,15 @@ def get_changes (status = "open", period = None):
         if more:
             next = changes[-1]["_sortkey"]
             url = base + "&N=" + next
-            time.sleep(3)
+            retrieving_record = Retrieving (id = status,
+                                            sortkey = next,
+                                            date = datetime.now())
+        else:
+            retrieving_record = Retrieving (id = status,
+                                            sortkey = None,
+                                            date = datetime.now())
+        session.merge (retrieving_record)
+        session.commit()
     print "Done (" + status + "): " + str (len(all_changes))
 
 
