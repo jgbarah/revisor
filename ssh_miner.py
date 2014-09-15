@@ -24,7 +24,9 @@
 ## Retrieve JSON files via ssh with detailed Gerrit output.
 
 import argparse
-from subprocess import check_output
+from subprocess import check_output, CalledProcessError
+from time import sleep
+import json
 
 description = """
 Simple script to retrieve data from Gerrit systems via ssh.
@@ -32,6 +34,10 @@ Simple script to retrieve data from Gerrit systems via ssh.
 Example of command used:
 
 ssh -p 29418 gerrit.wikimedia.org gerrit query --format=JSON --files --comments --patch-sets --all-approvals --commit-message --submit-records > /tmp/open.json
+
+Example of execution:
+
+ssh_miner.py --projectlist wikimedia_projects.json gerrit.wikimedia.org 29418 /tmp/changes.json
 
 """
 
@@ -50,6 +56,16 @@ def parse_args ():
                         )
     parser.add_argument("file",
                         help = "File to write the resulting JSON document"
+                        )
+    parser.add_argument("--sortkey",
+                        help = "Sortkey to resume retrieval " + \
+                            "(usually needs --status too)."
+                        )
+    parser.add_argument("--status",
+                        help = "Status of changes to retrieve, separated by commas, such as 'merged,abandoned,open'."
+                        )
+    parser.add_argument("--projectlist",
+                        help = "List of strings, in JSON format, with projects to retrieve changes from."
                         )
     args = parser.parse_args()
     return args
@@ -72,27 +88,42 @@ def find_last_int (string, key):
     value = string[start+len(key)+3:end]
     return int(value)
 
-if __name__ == "__main__":
+def retrieve (file, base_command, records, sortkey = None):
+    """Retrieve changes according to status_command, including retries.
 
-    args = parse_args()
-    print "Writing to file: " + args.file
-    file = open (args.file, "w")
-    # JSON documents are collections of items, but lacks the list marker:
-    # write it around the documents
-    file.write ("[\n")
-    base_command = ["ssh", "-p", args.port, args.server, "gerrit", "query",
-                    "--format=JSON", "--files", "--comments", "--patch-sets",
-                    "--all-approvals", "--commit-message", "--submit-records",
-                    "limit:100"]
+    Parameters
+    ----------
+
+    file: file
+       File to write retrieved records to.
+    base_command: list of str
+       Arguments of base command to retrieve Gerrit records.
+    records: int
+       Number of records retrieved so far.
+    sortkey: str
+       sortkey used by gerrit to resume a retrieval.
+
+    Returns
+    -------
+
+    int: Number of retrieved records, counting from records up.
+
+    """
+
     complete = False
-    records = 0
-
     while not complete:
-        if records == 0:
+        if sortkey is None:
             command = base_command
         else:
             command = base_command + ["resume_sortkey:" + sortkey,]
-        output = check_output(command)
+        # Run up to three times if fails.
+        for n in xrange(3):
+            try:
+                output = check_output(command)
+                break
+            except CalledProcessError:
+                sleep (5 * (n+2))
+                print "Retrying...."
         rows = find_last_int (output, "rowCount")
         if rows > 0:
             records = records + rows
@@ -104,7 +135,72 @@ if __name__ == "__main__":
             file.write (output[0:last_nl+1])
         else:
             complete = True
+    return records
 
-    file.write ("]\n")
-    file.close()
+def retrieve_projects (file, base_command, records, projects, size = 5):
+    """Retrieve changes for several projects, in chuncks.
+
+    Parameters
+    ----------
+
+    file: file
+       File to write retrieved records to.
+    base_command: list of str
+       Arguments of base command to retrieve Gerrit records.
+    records: int
+       Number of records retrieved so far.
+    projects: list of str
+       Projects to be retrieved.
+    size: int
+       Size of chuncks (to split projects list).
+
+    Returns
+    -------
+
+    int: Number of retrieved records, counting from records up.
+
+    """
+
+    project_chuncks = [projects[i:i + size]
+                       for i in range(0, len(projects), size)]
+    for chunck in project_chuncks:
+        print "Projects: " + ", ".join(chunck) + "."
+        query = ["project:" + item for item in chunck]
+        or_query = []
+        for project in query:
+            or_query.extend([project, "OR"])
+        or_query.pop()
+        status_command = base_command + or_query
+        records = retrieve (file, status_command, records)
+    return records
+
+if __name__ == "__main__":
+
+    args = parse_args()
+    if args.projectlist:
+        with open (args.projectlist, "r") as listfile:
+            projects_json = listfile.read()
+            projects = json.loads(projects_json)
+    with open (args.file, "w") as file:
+        print "Writing to file: " + args.file
+        base_command = ["ssh", "-p", args.port, args.server, "gerrit", 
+                        "query", "--format=JSON", "--files",
+                        "--comments", "--patch-sets", "--all-approvals",
+                        "--commit-message", "--submit-records",
+                    ]
+#                    "limit:500"]
+#                    "--dependencies"]
+        records = 0
+        if args.sortkey:
+            sortkey = args.sortkey
+        else:
+            sortkey = None
+        if args.status:
+            statuses = args.status.split(",")
+            for status in statuses:
+                print "Status: " + status + "." 
+                status_command = base_command + ["status:" + status]
+                retrieve (file, status_command, records, sortkey)
+        if args.projectlist:
+            retrieve_projects (file, base_command, records, projects)
     print "Done."
