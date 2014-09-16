@@ -44,7 +44,7 @@ of a Gerrit system.
 
 Example of use:
 
-revisor_json changes.json mysql://jgb:XXX@localhost/gerrit_changes
+revisor_json.py changes.json mysql://jgb:XXX@localhost/gerrit_changes
 
 """
 
