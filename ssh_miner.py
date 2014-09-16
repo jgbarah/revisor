@@ -111,23 +111,30 @@ def retrieve (file, base_command, records, sortkey = None):
     """
 
     complete = False
+    read_records = records
     while not complete:
         if sortkey is None:
             command = base_command
         else:
             command = base_command + ["resume_sortkey:" + sortkey,]
-        # Run up to three times if fails.
-        for n in xrange(3):
+        retrieved = False
+        # Run up to five times if it fails.
+        for n in xrange(5):
             try:
+                #print " ".join(command)
                 output = check_output(command)
+                retrieved = True
+                #print output
                 break
             except CalledProcessError:
-                sleep (5 * (n+2))
+                sleep (6 * (n+2))
                 print "Retrying...."
+        if not retrieved:
+            break
         rows = find_last_int (output, "rowCount")
         if rows > 0:
-            records = records + rows
-            print "Records read: " + str(records) + "."
+            read_records = read_records + rows
+            print "Records read: " + str(read_records) + "."
             sortkey = find_last_str (output, "sortKey")
             # Find last newline (before the final newline) 
             last_nl = output.rfind("\n", 0, -1)
@@ -135,9 +142,9 @@ def retrieve (file, base_command, records, sortkey = None):
             file.write (output[0:last_nl+1])
         else:
             complete = True
-    return records
+    return read_records
 
-def retrieve_projects (file, base_command, records, projects, size = 5):
+def retrieve_projects (file, base_command, records, projects, size = 1):
     """Retrieve changes for several projects, in chuncks.
 
     Parameters
@@ -187,8 +194,8 @@ if __name__ == "__main__":
                         "query", "--format=JSON", "--files",
                         "--comments", "--patch-sets", "--all-approvals",
                         "--commit-message", "--submit-records",
-                    ]
-#                    "limit:500"]
+                        ]
+#                        "limit:2"]
 #                    "--dependencies"]
         records = 0
         if args.sortkey:
@@ -200,7 +207,8 @@ if __name__ == "__main__":
             for status in statuses:
                 print "Status: " + status + "." 
                 status_command = base_command + ["status:" + status]
-                retrieve (file, status_command, records, sortkey)
+                records = retrieve (file, status_command, records, sortkey)
         if args.projectlist:
-            retrieve_projects (file, base_command, records, projects)
+            records = retrieve_projects (file, base_command,
+                                         records, projects)
     print "Done."
