@@ -38,14 +38,13 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship, backref
 
 description = """
-Simple script to retrieve data from Gerrit systems.
+Simple script to store in a database the contents of a JSON document
+obtained via the gerrit command (usually through an ssh connection)
+of a Gerrit system.
 
-Information about Gerrit API:
+Example of use:
 
-http://gerrit-review.googlesource.com/Documentation/rest-api.html
-http://gerrit-review.googlesource.com/Documentation/dev-rest-api.html
-
-https://gerrit.wikimedia.org/r/Documentation/rest-api.html
+revisor_json changes.json mysql://jgb:XXX@localhost/gerrit_changes
 
 """
 
@@ -165,73 +164,12 @@ def parse_args ():
                         help = "JSON file with the change records, " \
                             + "as produced by the gerrit command."
                         )
+    parser.add_argument("database",
+                        help = "SQLAlchemy url of the database " + \
+                            "to write the data to."
+                        )
     args = parser.parse_args()
     return args
-
-def analyze_header (header):
-
-    if header == "Abandoned":
-        return ("Abandoned", None)
-    if header == "Change has been successfully merged into the git repository.":
-        return ("Merged", None)
-    match = re.match (r'Uploaded patch set (\d*).$', header)
-    if match:
-        return ("Upload", int(match.group(1)))
-    match = re.match (r'Patch Set (\d*): .*Code-Review(.\d).*$', header)
-    if match:
-        return ("Review", int(match.group(2)))
-    match = re.match (r'Patch Set (\d*): .*-Code-Review.*$', header)
-    if match:
-        return ("Review", 0)
-    match = re.match (r"Patch Set (\d*): Do not submit.*$", header)
-    if match:
-        return ("Review", -2)
-    match = re.match (r"Patch Set (\d*): There's a problem with.*$", header)
-    if match:
-        return ("Review", -1)
-    match = re.match (r"Patch Set (\d*): Looks good to me, but.*$", header)
-    if match:
-        return ("Review", 1)
-    match = re.match (r"Patch Set (\d*): Looks good to me, approved.*$", header)
-    if match:
-        return ("Review", 2)
-    match = re.match (r'Patch Set (\d*): Verified(..)$', header)
-    if match:
-        return ("Verify", int(match.group(2)))
-    match = re.match (r'Patch Set (\d*): -Verified$', header)
-    if match:
-        return ("Verify", 0)
-    match = re.match (r'Patch Set (\d*): Checked$', header)
-    if match:
-        return ("Check", None)
-    match = re.match (r'Patch Set (\d*): Patch Set (\d*) was rebased$', header)
-    if match:
-        return ("Rebase", match.group(2))
-    match = re.match (r'Patch Set (\d*): Commit message was updated$', header)
-    if match:
-        return ("Update", None)
-    match = re.match (r'Patch Set (\d*): Cherry Picked.*$', header)
-    if match:
-        return ("Cherry", None)
-    match = re.match (r'Patch Set (\d*): Restored.*$', header)
-    if match:
-        return ("Restore", None)
-    match = re.match (r'Patch Set (\d*): Reverted.*$', header)
-    if match:
-        return ("Revert", None)
-    match = re.match (r'Topic(.*)$', header)
-    if match:
-        return ("Topic", None)
-    match = re.match (r'Change could not be merged(.*)$', header)
-    if match:
-        return ("Not merged", None)
-    match = re.match (r'Change cannot be merged(.*)$', header)
-    if match:
-        return ("Not merged", None)
-    match = re.match (r'Patch Set (\d*).$', header)
-    if match:
-        return ("Comment", None)
-    return ("Unknown", None)
 
 def db_messages (message_list):
     """Produce list of message records out of list of messages in Gerrit JSON.
@@ -349,82 +287,13 @@ def db_change (change):
         )
     return change_record
             
-def get_changes (status = "open", period = None):
-    """Get all changes modified since period ago.
-
-    GET /API/changes/?q=-age:$period
-
-    Example of url to use for open (new) changes that changed during
-    the last week:
-    https://gerrit.wikimedia.org/r/changes/?q=-age:1week&n=500
-
-    Example of url to use for getting 300 abandoned changes, starting from
-    _sortkey 002f101600025
-    https://gerrit.wikimedia.org/r/changes/?q=status:abandoned&N=002f1016000257d4&n=300
-
-    Example of other useful options:
-    o=DETAILED_LABELS&o=ALL_REVISIONS&o=ALL_COMMITS&o=DETAILED_ACCOUNTS&o=MESSAGES
-
-    Parameters
-    ----------
-
-    status: { "open", "merged", "abandoned" }
-        Status of tickets to get
-    period: int
-        Get tickets that changed since this number of days ago
-
-    """
-
-    base = args.url + "/changes/?q=status:" + status
-    if period is not None:
-        base = base + "+-age:" + str(period) + "day"
-    base = base + "&n=300"
-    base = base + "&o=MESSAGES"
-    base = base + "&o=ALL_REVISIONS"
-    all_changes = {}
-    session = Session()
-
-    more = True
-    url = base
-    while more:
-        print "Getting..." + str (len(all_changes))
-        res = urllib2.urlopen(url)
-        first_line = res.readline()
-        changes_json = res.read()
-        changes = json.loads(changes_json)
-        for change in changes:
-            id = change["_number"]
-            if id in all_changes:
-                print "Repeated: " + id
-            else:
-                all_changes[id] = change
-                change_record = db_change (change, status)
-                session.add(change_record)
-        if "_more_changes" in changes[-1]:
-            more = changes[-1]["_more_changes"]
-        else:
-            more = False
-        if more:
-            next = changes[-1]["_sortkey"]
-            url = base + "&N=" + next
-            retrieving_record = Retrieving (id = status,
-                                            sortkey = next,
-                                            date = datetime.now())
-        else:
-            retrieving_record = Retrieving (id = status,
-                                            sortkey = None,
-                                            date = datetime.now())
-        session.merge (retrieving_record)
-        session.commit()
-    print "Done (" + status + "): " + str (len(all_changes))
-
 
 if __name__ == "__main__":
 
     args = parse_args()
 
     from sqlalchemy import create_engine
-    database = 'mysql://jgb:XXX@localhost/revisorj_test'
+    database = args.database
     trailer = "?charset=utf8&use_unicode=0"
     database = database + trailer
 
@@ -441,20 +310,20 @@ if __name__ == "__main__":
     for line in open (args.file, "r"):
         count = count + 1
         change = json.loads(line)
-        print count, change["number"], change["url"]
+        print str(count) + ": " + str(change["number"])
         change_record = db_change (change)
         if "comments" in change:
             change_record.messages = db_messages (change["comments"])
-            print "Messages added: " + str (len (change_record.messages))
+            #print "Messages added: " + str (len (change_record.messages))
         if "patchSets" in change:
             change_record.revisions = db_revisions (change["patchSets"])
-            print "Revisions added: " + str (len (change_record.revisions))
+            #print "Revisions added: " + str (len (change_record.revisions))
             for rev, revision in enumerate (change["patchSets"]):
                 if "approvals" in revision:
                     change_record.revisions[rev].approvals = \
                         db_approvals(revision["approvals"])
-                    print "Approvals added: " + \
-                        str (len (change_record.revisions[rev].approvals))
+                    #print "Approvals added: " + \
+                    #    str (len (change_record.revisions[rev].approvals))
                     
         session.add(change_record)
 
