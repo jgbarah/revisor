@@ -48,10 +48,6 @@ def parse_args ():
     """
 
     parser = argparse.ArgumentParser(description = description)
-    parser.add_argument("--summary",
-                        help = "Summary of main stats in the database",
-                        action = "store_true"
-                        )
     parser.add_argument("database",
                         help = "SQLAlchemy url of the database " + \
                             "to write the data to (schema not included)."
@@ -60,10 +56,17 @@ def parse_args ():
                         help = "Name of the schema " + \
                             "to write the data to."
                         )
+    parser.add_argument("--summary",
+                        help = "Summary of main stats in the database",
+                        action = "store_true"
+                        )
+    parser.add_argument("--change",
+                        help = "Summary of a change, given change number"
+                        )
     args = parser.parse_args()
     return args
 
-def summary ():
+def show_summary ():
     """Summary of main stats in the database.
 
     Number of changes, messages, revisions, approvals.
@@ -83,6 +86,91 @@ def summary ():
                                func.count (DB.Approval.uid)))
     print "Approvals: " + str(res.scalar())
 
+    res = session.query(label("max",
+                              func.max(DB.Change.updated)))
+    last_date = res.one().max
+    print last_date
+    res = session.query(DB.Change).filter(DB.Change.updated == last_date)
+    last_change = res.one()
+    print "Last change: " + str(last_change.number)
+    print "  Updated: " + str(last_change.updated)
+
+def show_change_record (change):
+    """Show a change record.
+
+    Parameters
+    ----------
+
+    change: DB.Change
+        Change record to show.
+
+    """
+
+    print "Change: " + str(change.number)
+    print "Project: " + change.project + " (branch: " + \
+        change.branch + ") " + change.url
+    print "Status: " + change.status + " / Created: " + \
+        str (change.created) + \
+        " Updated: " + str (change.updated)
+    print "Subject: " + change.subject
+    
+def show_revision_record (rev, approvals = True):
+    """Show a change record.
+
+    Parameters
+    ----------
+
+    rev: DB.Revision
+        Revision record to show.
+    approvals: bool
+        Flag to show approvals (or not).
+
+    """
+
+    print "Revision (patchset) " + str(rev.number) + " (" + \
+        rev.revision + ")"
+    print "  Date: " + str(rev.date)
+    if approvals:
+        res = session.query(DB.Approval) \
+            .filter(DB.Approval.revision_id == rev.uid) \
+            .order_by(DB.Approval.date)
+        for approval in res.all():
+            show_approval_record (approval)
+
+def show_approval_record (approval):
+    """Show an approval record.
+
+    Parameters
+    ----------
+
+    approval: DB.Approval
+        Approval record to show.
+
+    """
+
+    print "  " + approval.type + ": " + str(approval.value)
+    print "    Date: " + str(approval.date)
+
+def show_change (change_no):
+    """Summary of data for a change (including revisions, approvals, etc.)
+
+    Parameters
+    ----------
+
+    change_no: str
+        Change number.
+
+    """
+
+    res = session.query(DB.Change) \
+        .filter (DB.Change.number == change_no)
+    change = res.one()
+    show_change_record (change)
+    res = session.query(DB.Revision) \
+        .filter (DB.Revision.change_id == change.uid)
+    for revision in res.all():
+         show_revision_record (revision)
+
 if __name__ == "__main__":
 
     from grimoirelib_alch.aux.standalone import stdout_utf8, print_banner
@@ -96,4 +184,6 @@ if __name__ == "__main__":
     session = database.build_session(Query, echo = False)
 
     if args.summary:
-        summary()
+        show_summary()
+    if args.change:
+        show_change(args.change)
