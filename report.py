@@ -25,9 +25,9 @@
 
 from query_gerrit import DB, Query
 
-from sqlalchemy import func, Column
+from sqlalchemy import func, Column, and_
 from sqlalchemy.sql import label
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import argparse
 
@@ -62,6 +62,10 @@ def parse_args ():
                         )
     parser.add_argument("--change",
                         help = "Summary of a change, given change number"
+                        )
+    parser.add_argument("--check_upload",
+                        help = "Check upload time of first revision with " + \
+                            "created time for change. (time in mins.)"
                         )
     args = parser.parse_args()
     return args
@@ -191,6 +195,52 @@ def show_change (change_no):
     for message in res.all():
         show_message_record (message)
 
+def check_upload (diff):
+    """Check upload time of first revision with created time for change.
+
+    For each change, the upload time of the first revision (patchset) is
+    matched against the created time for the change. Those changes with
+    more than diff mins. of difference are shown.
+
+    Parameters
+    ----------
+
+    diff: int
+        Minutes of difference considered.
+
+    """
+
+    revs = session.query(label ("daterev",
+                                func.min(DB.Revision.date)),
+                         label ("change_id",
+                                DB.Revision.change_id),
+                         label ("number",
+                                DB.Change.number)) \
+          .filter (DB.Revision.change_id == DB.Change.uid) \
+          .group_by("change_id") \
+          .subquery()
+    res = session.query(label ("number",
+                               revs.c.number),
+                        label ("created",
+                               DB.Change.created),
+                        label ("daterev",
+                               revs.c.daterev),
+                        label ("diff",
+                               func.timediff(DB.Change.created,
+                                             revs.c.daterev))) \
+       .filter(and_(
+                 func.abs(func.timediff(
+                       DB.Change.created,
+                       revs.c.daterev) > timedelta (minutes = diff)),
+                 DB.Change.uid == revs.c.change_id)) \
+       .order_by (func.timediff(DB.Change.created, revs.c.daterev))
+    messages = res.all()
+    for message in messages:
+        print "Change " + str(message.number) + ": " + str(message.diff) + \
+             " -- " + str(message.created) + " (created), " + \
+             str(message.daterev) + " (first revision)"
+    print "Total changes with discrepancy: " + str (len(messages))
+
 if __name__ == "__main__":
 
     from grimoirelib_alch.aux.standalone import stdout_utf8, print_banner
@@ -207,3 +257,5 @@ if __name__ == "__main__":
         show_summary()
     if args.change:
         show_change(args.change)
+    if args.check_upload:
+        check_upload(int(args.check_upload))
