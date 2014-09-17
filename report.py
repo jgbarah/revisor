@@ -151,6 +151,20 @@ def show_approval_record (approval):
     print "  " + approval.type + ": " + str(approval.value)
     print "    Date: " + str(approval.date)
 
+def show_message_record (message):
+    """Show an message record.
+
+    Parameters
+    ----------
+
+    message: DB.Message
+        Message record to show.
+
+    """
+
+    print "Message: " + message.header
+    print "  Date: " + str(message.date)
+
 def show_change (change_no):
     """Summary of data for a change (including revisions, approvals, etc.)
 
@@ -167,9 +181,15 @@ def show_change (change_no):
     change = res.one()
     show_change_record (change)
     res = session.query(DB.Revision) \
-        .filter (DB.Revision.change_id == change.uid)
+        .filter (DB.Revision.change_id == change.uid) \
+        .order_by (DB.Revision.number)
     for revision in res.all():
          show_revision_record (revision)
+    res = session.query(DB.Message) \
+        .filter(DB.Message.change_id == change.uid) \
+        .order_by(DB.Message.date)
+    for message in res.all():
+        show_message_record (message)
 
 if __name__ == "__main__":
 

@@ -89,9 +89,9 @@ class DB (GrimoireDatabase):
             tablename = 'approvals',
             schemaname = self.schema,
             columns = dict (
-                change_id = Column(
+                revision_id = Column(
                     Integer,
-                    ForeignKey(self.schema + '.' + 'changes.uid')
+                    ForeignKey(self.schema + '.' + 'revisions.uid')
                     ),
                 ))
 
