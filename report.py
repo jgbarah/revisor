@@ -30,6 +30,7 @@ from sqlalchemy.sql import label
 from datetime import datetime, timedelta
 
 import argparse
+import textwrap
 
 description = """
 Simple script to produce reports with information extracted from a
@@ -60,12 +61,20 @@ def parse_args ():
                         help = "Summary of main stats in the database",
                         action = "store_true"
                         )
+    parser.add_argument("--full_messages",
+                        help = "Show full messages wherever messages " + \
+                            "are to be shown.",
+                        action = "store_true"
+                        )
     parser.add_argument("--change",
                         help = "Summary of a change, given change number"
                         )
     parser.add_argument("--check_upload",
                         help = "Check upload time of first revision with " + \
                             "created time for change. (time in mins.)"
+                        )
+    parser.add_argument("--show_drafts",
+                        help = "show revisins with isdraft == True, up to the number specified.",
                         )
     args = parser.parse_args()
     return args
@@ -118,8 +127,8 @@ def show_change_record (change):
         " Updated: " + str (change.updated)
     print "Subject: " + change.subject
     
-def show_revision_record (rev, approvals = True):
-    """Show a change record.
+def show_revision_record (rev, approvals = True, change = None):
+    """Show a revision record.
 
     Parameters
     ----------
@@ -128,11 +137,17 @@ def show_revision_record (rev, approvals = True):
         Revision record to show.
     approvals: bool
         Flag to show approvals (or not).
-
+    change: int
+        Change number (show if not None)
     """
 
     print "Revision (patchset) " + str(rev.number) + " (" + \
-        rev.revision + ")"
+        rev.revision + ")",
+    if change:
+        print ", Change: " + str(change),
+    if rev.isdraft:
+        print " (rev is DRAFT)",
+    print
     print "  Date: " + str(rev.date)
     if approvals:
         res = session.query(DB.Approval) \
@@ -168,6 +183,11 @@ def show_message_record (message):
 
     print "Message: " + message.header
     print "  Date: " + str(message.date)
+    if args.full_messages:
+        print "  Full text: \n" + \
+            "".join (
+            ["   " + line for line in message.message.splitlines(True)]
+            )
 
 def show_change (change_no):
     """Summary of data for a change (including revisions, approvals, etc.)
@@ -241,6 +261,26 @@ def check_upload (diff):
              str(message.daterev) + " (first revision)"
     print "Total changes with discrepancy: " + str (len(messages))
 
+def show_drafts(max):
+    """Find revisins with isdraft == True up to the number specified.
+
+    Parameters
+    ----------
+
+    max: int
+        Maximum number of isdraft revisions to print.
+
+    """
+
+    res = session.query(DB.Revision,
+                        label("change",
+                              DB.Change.number)) \
+          .join(DB.Change) \
+          .filter (DB.Revision.isdraft == True)
+    for rev in res.limit(max).all():
+        show_revision_record(rev = rev.Revision, change = rev.change)
+    print "Total number of drafts: " + str(res.count())
+
 if __name__ == "__main__":
 
     from grimoirelib_alch.aux.standalone import stdout_utf8, print_banner
@@ -259,3 +299,5 @@ if __name__ == "__main__":
         show_change(args.change)
     if args.check_upload:
         check_upload(int(args.check_upload))
+    if args.show_drafts:
+        show_drafts(args.show_drafts)
