@@ -25,7 +25,7 @@
 
 from query_gerrit import DB, Query
 
-from sqlalchemy import func, Column, and_
+from sqlalchemy import func, Column, and_, desc, type_coerce, Float
 from sqlalchemy.sql import label
 from datetime import datetime, timedelta
 
@@ -72,6 +72,11 @@ def parse_args ():
     parser.add_argument("--check_upload",
                         help = "Check upload time of first revision with " + \
                             "created time for change. (time in mins.)"
+                        )
+    parser.add_argument("--check_newer_dates",
+                        help = "Check that all dates related to a " + \
+                            "are newer than the creation date " + \
+                            "(print at most n issues found)."
                         )
     parser.add_argument("--show_drafts",
                         help = "show revisins with isdraft == True, up to the number specified.",
@@ -239,27 +244,60 @@ def check_upload (diff):
           .filter (DB.Revision.change_id == DB.Change.uid) \
           .group_by("change_id") \
           .subquery()
-    res = session.query(label ("number",
-                               revs.c.number),
-                        label ("created",
-                               DB.Change.created),
-                        label ("daterev",
-                               revs.c.daterev),
-                        label ("diff",
-                               func.timediff(DB.Change.created,
-                                             revs.c.daterev))) \
-       .filter(and_(
-                 func.abs(func.timediff(
-                       DB.Change.created,
-                       revs.c.daterev) > timedelta (minutes = diff)),
+    res = session.query(
+        label ("number",
+               revs.c.number),
+        label ("created",
+               DB.Change.created),
+        label ("daterev",
+               revs.c.daterev)
+        ) \
+        .filter(and_(
+                func.abs(func.timediff(
+                        DB.Change.created,
+                        revs.c.daterev) > timedelta (minutes = diff)),
                  DB.Change.uid == revs.c.change_id)) \
-       .order_by (func.timediff(DB.Change.created, revs.c.daterev))
+       .order_by (func.datediff(DB.Change.created, revs.c.daterev),
+                  func.timediff(DB.Change.created, revs.c.daterev))
     messages = res.all()
     for message in messages:
-        print "Change " + str(message.number) + ": " + str(message.diff) + \
+        print "Change " + str(message.number) + ": " + \
+            str(message.created - message.daterev) + \
              " -- " + str(message.created) + " (created), " + \
              str(message.daterev) + " (first revision)"
     print "Total changes with discrepancy: " + str (len(messages))
+
+def check_newer_dates(max):
+    """Check that dates related to a change are newer than creation date.
+
+    This will print sumary stats about dates that are not correct,
+    and will show at most max cases.
+
+    Parameters
+    ----------
+
+    max: int
+        Max number of cases to show among those violating the check.
+
+    """
+
+    res = session.query(
+        label ("number",
+               DB.Change.number),
+        label ("created",
+               DB.Change.created),
+        label ("updated",
+               DB.Change.updated)
+        ) \
+        .filter (DB.Change.created > DB.Change.updated) \
+        .order_by (desc (func.datediff(DB.Change.created,
+                                       DB.Change.updated)))
+    cases = res.limit(max).all()
+    for case in cases:
+        print str(case.number) + ": " + str(case.created) + \
+            " (created), " + str(case.updated) + " (updated) Mismatch: " + \
+            str(case.created - case.updated) + ")"
+    print "Total number of mismatchs: " + str(res.count())
 
 def show_drafts(max):
     """Find revisins with isdraft == True up to the number specified.
@@ -301,3 +339,5 @@ if __name__ == "__main__":
         check_upload(int(args.check_upload))
     if args.show_drafts:
         show_drafts(args.show_drafts)
+    if args.check_newer_dates:
+        check_newer_dates(args.check_newer_dates)
