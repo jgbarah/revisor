@@ -294,7 +294,8 @@ if __name__ == "__main__":
 
     from sqlalchemy import create_engine
     database = args.database
-    trailer = "?charset=utf8&use_unicode=0"
+#    trailer = "?charset=utf8&use_unicode=0"
+    trailer = "?charset=utf8mb4&use_unicode=0"
     database = database + trailer
 
     engine = create_engine(database, echo=False)

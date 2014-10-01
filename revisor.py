@@ -422,7 +422,8 @@ if __name__ == "__main__":
 
     from sqlalchemy import create_engine
     database = 'mysql://jgb:XXX@localhost/revisor_test'
-    trailer = "?charset=utf8&use_unicode=0"
+#    trailer = "?charset=utf8&use_unicode=0"
+    trailer = "?charset=utf8mb4&use_unicode=0"
     database = database + trailer
 
     engine = create_engine(database, echo=False)

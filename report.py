@@ -51,11 +51,11 @@ def parse_args ():
     parser = argparse.ArgumentParser(description = description)
     parser.add_argument("database",
                         help = "SQLAlchemy url of the database " + \
-                            "to write the data to (schema not included)."
+                            "to read data from (schema not included)."
                         )
     parser.add_argument("schema",
                         help = "Name of the schema " + \
-                            "to write the data to."
+                            "to read data from."
                         )
     parser.add_argument("--summary",
                         help = "Summary of main stats in the database",
@@ -73,13 +73,29 @@ def parse_args ():
                         help = "Check upload time of first revision with " + \
                             "created time for change. (time in mins.)"
                         )
+    parser.add_argument("--check_first_revision",
+                        help = "Check that changes have a first revision."
+                        )
+    parser.add_argument("--check_status",
+                        help = "Check status of changes"
+                        )
+    parser.add_argument("--check_subm",
+                        help = "Check Check that changes with 'SUBM' " + \
+                            "approval are closed"
+                        )
     parser.add_argument("--check_newer_dates",
                         help = "Check that all dates related to a " + \
                             "are newer than the creation date " + \
                             "(print at most n issues found)."
                         )
     parser.add_argument("--show_drafts",
-                        help = "show revisins with isdraft == True, up to the number specified.",
+                        help = "Show revisins with isdraft == True, up to the number specified.",
+                        )
+    parser.add_argument("--calc_duration_changes",
+                        help = "Calculate duration of changes.",
+                        )
+    parser.add_argument("--calc_duration_changes_approvals",
+                        help = "Calculate duration of changes (using approvals).",
                         )
     args = parser.parse_args()
     return args
@@ -299,6 +315,128 @@ def check_newer_dates(max):
             str(case.created - case.updated) + ")"
     print "Total number of mismatchs: " + str(res.count())
 
+def check_first_revision(max):
+    """Check that changes have a first revision.
+
+    Parameters
+    ----------
+
+    max: int
+        Max number of cases to show among those violating the check.
+
+    """
+
+    first = session.query(
+        label ("change", DB.Revision.change_id),
+        ) \
+        .filter (DB.Revision.number == 1) \
+        .subquery()
+    q = session.query(
+        label ("change", DB.Change.number),
+        ) \
+        .filter (~DB.Change.uid.in_(first))
+    for change in q.limit(max).all():
+        print change.change
+    print "Total number of changes with no first revision: " + str(q.count())
+    
+
+def check_status(max):
+    """Check status of changes.
+
+    Check the status of each change, in combination with its "open" flag.
+
+    Parameters
+    ----------
+
+    max: int
+        Max number of cases to show among those violating the check.
+
+    """
+
+    q = session.query(
+        label("num", func.count(DB.Change.uid)),
+        label("open", DB.Change.open),
+        label("status", DB.Change.status),
+        ) \
+        .group_by (DB.Change.open, DB.Change.status)
+    for state in q.all():
+        print "Open is " + str(state.open) + ", status is " \
+            + state.status + ": " + str(state.num)
+
+def check_subm(max):
+    """Check that changes with "SUBM" approval are closed.
+
+    Parameters
+    ----------
+
+    max: int
+        Max number of cases to show among those violating the check.
+
+    """
+
+    # Subquery for changes with at least one SUBM approval
+    q_subm = session.query(DB.Revision) \
+        .join(DB.Approval) \
+        .filter (DB.Change.uid == DB.Revision.change_id,
+                 DB.Approval.type == "SUBM")
+    # Query for list of changes with at least one SUBM approval
+    q_changes_subm = session.query(
+        label ("num", DB.Change.number),
+        ) \
+        .filter(q_subm.exists())
+    total = q_changes_subm.count()
+    print "Changes with at least a SUBM approval (" + str(total) + "):"
+    # Query for cases of changes with at least one SUBM approval
+    q_changes_subm_cases = session.query(
+        label ("open", DB.Change.open),
+        label ("num", func.count(DB.Change.uid)),
+        ) \
+        .filter(q_subm.exists()) \
+        .group_by (DB.Change.open)
+    cases = q_changes_subm_cases.all()
+    for case in cases:
+        print "  Open is " + str(case.open) + ": " + str(case.num)
+        if case.open == 1:
+            print "    Changes still open (list): ",
+            cases = q_changes_subm.filter(DB.Change.open == 1).limit(max).all()
+            for case in cases:
+                print str(case.num) + " ",
+            print
+
+    # Query for list of changes with no SUBM approval
+    q_changes_nosubm = session.query(
+        label ("num", DB.Change.number),
+        ) \
+        .filter(~q_subm.exists())
+    total = q_changes_nosubm.count()
+    print "Changes with no SUBM approval (" + str(total) + "):"
+    # Query for cases of changes with no SUBM approval
+    q_changes_nosubm_cases = session.query(
+        label ("open", DB.Change.open),
+        label ("num", func.count(DB.Change.uid)),
+        label ("status", DB.Change.status),
+        ) \
+        .filter(~q_subm.exists()) \
+        .group_by (DB.Change.open)
+    cases = q_changes_nosubm_cases.all()
+    for case in cases:
+        print "  Open is " + str(case.open) + ": " + str(case.num)
+        if case.open == 0:
+            cases_status = q_changes_nosubm_cases \
+                .group_by (DB.Change.status).all()
+            for case_status in cases_status:
+                print "    Status is " + case_status.status \
+                    + ": " + str(case_status.num)
+            print "    Changes already closed and merged (list): ",
+            changes = q_changes_nosubm.filter(DB.Change.open == 0) \
+                .filter(DB.Change.status == "MERGED") \
+                .limit(max).all()
+            for change in changes:
+                print str(change.num),
+            print
+
+
+
 def show_drafts(max):
     """Find revisins with isdraft == True up to the number specified.
 
@@ -319,6 +457,85 @@ def show_drafts(max):
         show_revision_record(rev = rev.Revision, change = rev.change)
     print "Total number of drafts: " + str(res.count())
 
+def calc_duration_changes(max):
+    """Calculate duration of changes.
+
+    This will print sumary stats about the duration of the
+    changes in the review system, and will show some of them.
+
+    Parameters
+    ----------
+
+    max: int
+        Max number of changes to show.
+
+    """
+
+    res = session.query(
+        label ("number",
+               DB.Change.number),
+        label ("start",
+               DB.Change.created),
+        label ("finish",
+               DB.Change.updated),
+        ) \
+        .filter (DB.Change.created < DB.Change.updated) \
+        .order_by (desc (func.datediff(DB.Change.updated,
+                                       DB.Change.created)))
+    cases = res.limit(max).all()
+    for case in cases:
+        print str(case.number) + ": " + str(case.start) + \
+            " (start), " + str(case.finish) + " (finish) Duration: " + \
+            str(case.finish - case.start)
+
+def calc_duration_changes_approvals(max):
+    """Calculate duration of changes using information about approvals.
+
+    This will print sumary stats about the duration of the
+    changes in the review system, and will show some of them.
+    A change is defined to start when the first upload for it is
+    found, and defined to end when the latest approval is found.
+
+    Parameters
+    ----------
+
+    max: int
+        Max number of changes to show.
+
+    """
+
+    starts = session.query(
+        label ("number",
+               DB.Change.number),
+        label ("date",
+               func.min (DB.Revision.date)),
+        ) \
+        .filter (DB.Change.uid == DB.Revision.change_id) \
+        .group_by (DB.Change.uid) \
+        .subquery()
+    finishes = session.query(
+        label ("number",
+               DB.Change.number),
+        label ("date",
+               func.max (DB.Approval.date)),
+        ) \
+        .filter (DB.Change.uid == DB.Revision.change_id,
+                 DB.Revision.uid == DB.Approval.revision_id) \
+        .group_by (DB.Change.uid) \
+        .subquery()
+    query = session.query(
+        label ("number", starts.c.number),
+        label ("start", starts.c.date),
+        label ("finish", finishes.c.date),
+        ) \
+        .filter (starts.c.number == finishes.c.number)
+    cases = query.limit(max).all()
+    for case in cases:
+        print str(case.number) + ": " + str(case.start) + \
+            " (start), " + str(case.finish) + " (finish) Duration: " + \
+            str(case.finish - case.start)
+
+
 if __name__ == "__main__":
 
     from grimoirelib_alch.aux.standalone import stdout_utf8, print_banner
@@ -337,7 +554,17 @@ if __name__ == "__main__":
         show_change(args.change)
     if args.check_upload:
         check_upload(int(args.check_upload))
+    if args.check_first_revision:
+        check_first_revision(int(args.check_first_revision))
+    if args.check_status:
+        check_status(int(args.check_status))
+    if args.check_subm:
+        check_subm(int(args.check_subm))
     if args.show_drafts:
         show_drafts(args.show_drafts)
     if args.check_newer_dates:
         check_newer_dates(args.check_newer_dates)
+    if args.calc_duration_changes:
+        calc_duration_changes(args.calc_duration_changes)
+    if args.calc_duration_changes_approvals:
+        calc_duration_changes_approvals(args.calc_duration_changes_approvals)
