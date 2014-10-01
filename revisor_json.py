@@ -36,6 +36,11 @@ from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship, backref
 
+# To properly support utf8mb4 in SQLAlchemy
+# http://blog.bbdouglas.com/unicode-surrogate-characters-and-lamp/
+import encodings
+encodings._aliases["utf8mb4"] = "utf_8"
+
 description = """
 Simple script to store in a database the contents of a JSON document
 obtained via the gerrit command (usually through an ssh connection)
