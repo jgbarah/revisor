@@ -25,7 +25,7 @@
 
 from query_gerrit import DB, Query
 
-from sqlalchemy import func, Column, and_, desc, type_coerce, Float
+from sqlalchemy import func, Column, and_, desc, type_coerce, Float, or_
 from sqlalchemy.sql import label
 from datetime import datetime, timedelta
 
@@ -78,6 +78,10 @@ def parse_args ():
                         )
     parser.add_argument("--check_status",
                         help = "Check status of changes"
+                        )
+    parser.add_argument("--check_abandon",
+                        help = "Check that changes with an 'Abandoned' " \
+                            + "message are abandoned."
                         )
     parser.add_argument("--check_subm",
                         help = "Check Check that changes with 'SUBM' " + \
@@ -363,6 +367,52 @@ def check_status(max):
         print "Open is " + str(state.open) + ", status is " \
             + state.status + ": " + str(state.num)
 
+def check_abandon(max):
+    """Check that changes with an "Abandoned" message are abandoned.
+
+    Parameters
+    ----------
+
+    max: int
+        Max number of cases to show among those violating the check.
+
+    """
+
+    q = session.query(
+        label("num", DB.Change.number),
+        ) \
+        .filter (DB.Change.status == "ABANDONED")
+    print q.count()
+    q = session.query(
+        label("num", DB.Change.number),
+        ) \
+        .filter (DB.Change.status == "ABANDONED") \
+        .join (DB.Message) \
+        .filter (DB.Message.header == "Abandoned")
+    print q.count()
+
+    q_abandoned = session.query(DB.Message) \
+        .filter(DB.Change.uid == DB.Message.change_id,
+                or_ (DB.Message.header == "Abandoned",
+                     DB.Message.header.like ("Patch%Abandoned")))
+    q = session.query(
+        label("num", DB.Change.number),
+        ) \
+        .filter (DB.Change.status == "ABANDONED") \
+        .filter(~q_abandoned.exists())
+    print q.count()
+    for change in q.limit(max).all():
+        print str(change.num),
+    print
+
+    q = session.query(
+        label("num", DB.Change.number),
+        ) \
+        .filter (DB.Change.status != "ABANDONED") \
+        .filter(q_abandoned.exists())
+    print q.count()
+    
+
 def check_subm(max):
     """Check that changes with "SUBM" approval are closed.
 
@@ -422,20 +472,41 @@ def check_subm(max):
     for case in cases:
         print "  Open is " + str(case.open) + ": " + str(case.num)
         if case.open == 0:
+            # Closed changes, but no SUBM
             cases_status = q_changes_nosubm_cases \
+                .filter(DB.Change.open == 0) \
                 .group_by (DB.Change.status).all()
             for case_status in cases_status:
                 print "    Status is " + case_status.status \
                     + ": " + str(case_status.num)
-            print "    Changes already closed and merged (list): ",
-            changes = q_changes_nosubm.filter(DB.Change.open == 0) \
-                .filter(DB.Change.status == "MERGED") \
-                .limit(max).all()
-            for change in changes:
-                print str(change.num),
-            print
-
-
+                if case_status.status == "MERGED":
+                    # Closed & merged changes, but no SUBM 
+                    pushed = q_changes_nosubm \
+                        .join(DB.Message) \
+                        .filter(DB.Change.status == "MERGED") \
+                        .filter(DB.Change.open == 0) \
+                        .filter(DB.Message.header.like(
+                            "Change has been successfully pushed%"
+                            ))
+                    print "      Changes merged by being pushed: " \
+                        + str(pushed.count())
+                    # Other remaining changes
+                    q_pushed = session.query(DB.Message) \
+                        .filter(DB.Change.uid == DB.Message.change_id,
+                                DB.Message.header.like(
+                                    "Change has been successfully pushed%"
+                                    ))
+                    not_pushed = q_changes_nosubm \
+                        .filter(DB.Change.status == "MERGED") \
+                        .filter(DB.Change.open == 0) \
+                        .filter(~q_pushed.exists())
+                    not_pushed_no = not_pushed.count()
+                    print "      Other changes (" + str(not_pushed_no) \
+                        + ", list): ",
+                    changes = not_pushed.limit(max).all()
+                    for change in changes:
+                        print str(change.num),
+                    print
 
 def show_drafts(max):
     """Find revisins with isdraft == True up to the number specified.
@@ -458,7 +529,7 @@ def show_drafts(max):
     print "Total number of drafts: " + str(res.count())
 
 def calc_duration_changes(max):
-    """Calculate duration of changes.
+    """Calculate duration of changes (time from created to updated).
 
     This will print sumary stats about the duration of the
     changes in the review system, and will show some of them.
@@ -558,6 +629,8 @@ if __name__ == "__main__":
         check_first_revision(int(args.check_first_revision))
     if args.check_status:
         check_status(int(args.check_status))
+    if args.check_abandon:
+        check_abandon(int(args.check_abandon))
     if args.check_subm:
         check_subm(int(args.check_subm))
     if args.show_drafts:
