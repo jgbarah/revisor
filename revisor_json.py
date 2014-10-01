@@ -22,7 +22,6 @@
 ##
 
 ## Data retriever for source code management systems.
-## Currently is only intended to support Gerrit HTTP API.
 ## This version assumes that data produced by running the gerrit command
 ## (usually throguh ssh) is available as a JSON file.
 
