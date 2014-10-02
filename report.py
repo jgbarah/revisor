@@ -101,6 +101,9 @@ def parse_args ():
     parser.add_argument("--calc_duration_changes_approvals",
                         help = "Calculate duration of changes (using approvals).",
                         )
+    parser.add_argument("--events_start_change",
+                        help = "Produce a list with all change start events..",
+                        )
     args = parser.parse_args()
     return args
 
@@ -606,6 +609,40 @@ def calc_duration_changes_approvals(max):
             " (start), " + str(case.finish) + " (finish) Duration: " + \
             str(case.finish - case.start)
 
+def events_start_change(max):
+    """Produce a list with all change start events.
+
+    Uses the time of the first revision for each change.
+
+    Parameters
+    ----------
+
+    max: int
+        Max number of changes to consider (0 means "all").
+
+    """
+
+    import pandas
+    import numpy as np
+
+    q = session.query(
+        label ("date", func.min(DB.Revision.date)),
+        label ("change", DB.Change.number),
+        ) \
+        .join(DB.Change) \
+        .group_by(DB.Change.uid)
+    if max != 0:
+        q = q.limit(max)
+    events = np.array (q.all()).transpose()
+    #print events
+    df = pandas.DataFrame (events[1], index=events[0] )
+    #print df
+    for month, values in df.groupby(lambda x: x.month):
+        print month,
+        print len(values)
+    bymonths = df.groupby(pandas.TimeGrouper(freq="M"))
+    number = bymonths.aggregate(pandas.Series.nunique)
+    print number
 
 if __name__ == "__main__":
 
@@ -640,4 +677,7 @@ if __name__ == "__main__":
     if args.calc_duration_changes:
         calc_duration_changes(args.calc_duration_changes)
     if args.calc_duration_changes_approvals:
-        calc_duration_changes_approvals(args.calc_duration_changes_approvals)
+        calc_duration_changes_approvals(
+            args.calc_duration_changes_approvals)
+    if args.events_start_change:
+        events_start_change(args.events_start_change)
