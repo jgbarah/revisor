@@ -315,7 +315,7 @@ if __name__ == "__main__":
     for line in open (args.file, "r"):
         count = count + 1
         change = json.loads(line)
-        print str(count) + ": " + str(change["number"])
+        print str(count) + ": " + str(change["number"]),
         change_record = db_change (change)
         if "comments" in change:
             change_record.messages = db_messages (change["comments"])
@@ -330,7 +330,17 @@ if __name__ == "__main__":
                     #print "Approvals added: " + \
                     #    str (len (change_record.revisions[rev].approvals))
                     
+        q = session.query(Change) \
+            .filter(Change.number == change["number"])
+        if q.count() > 0:
+            print " REPEATED, deleting old records."
+            session.delete(q.one())
+        else:
+            print
         session.add(change_record)
-
-        session.commit()
+        if count % 1000 == 0:
+            print "Comitting..."
+            session.commit()
+    print "Comitting..."
+    session.commit()
 
