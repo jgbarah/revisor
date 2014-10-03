@@ -57,6 +57,10 @@ def parse_args ():
                         help = "Name of the schema " + \
                             "to read data from."
                         )
+    parser.add_argument("--projects",
+                        help = "Name of projects to consider, " + \
+                            "separated by comma."
+                        ) 
     parser.add_argument("--summary",
                         help = "Summary of main stats in the database",
                         action = "store_true"
@@ -68,6 +72,10 @@ def parse_args ():
                         )
     parser.add_argument("--change",
                         help = "Summary of a change, given change number"
+                        )
+    parser.add_argument("--check_change_numbers",
+                        help = "Check change numbers.",
+                        action = "store_true"
                         )
     parser.add_argument("--check_upload",
                         help = "Check upload time of first revision with " + \
@@ -114,25 +122,30 @@ def show_summary ():
 
     """
 
-    res = session.query(label ("changes",
-                               func.count (DB.Change.id)))
-    print "Changes: " + str(res.scalar())
-    res = session.query(label ("messages",
-                               func.count (DB.Message.uid)))
-    print "Messages: " + str(res.scalar())
-    res = session.query(label ("revisions",
-                               func.count (DB.Revision.uid)))
-    print "Revisions: " + str(res.scalar())
-    res = session.query(label ("approvals",
-                               func.count (DB.Approval.uid)))
-    print "Approvals: " + str(res.scalar())
-
-    res = session.query(label("max",
-                              func.max(DB.Change.updated)))
-    last_date = res.one().max
+    q = session.query(label ("changes",
+                             func.count (DB.Change.id)))
+    print "Changes: " + str(q.scalar())
+    q = session.query(label ("messages",
+                             func.count (DB.Message.uid)))
+    print "Messages: " + str(q.scalar())
+    q = session.query(label ("revisions",
+                             func.count (DB.Revision.uid)))
+    print "Revisions: " + str(q.scalar())
+    q = session.query(
+        label ("change", DB.Revision.uid),
+        ) \
+        .join(DB.Change) \
+        .group_by(DB.Change.uid)
+    print "Changes with revisions: " + str(q.count())
+    q = session.query(label ("approvals",
+                             func.count (DB.Approval.uid)))
+    print "Approvals: " + str(q.scalar())
+    q = session.query(label("max",
+                            func.max(DB.Change.updated)))
+    last_date = q.one().max
     print last_date
-    res = session.query(DB.Change).filter(DB.Change.updated == last_date)
-    last_change = res.one()
+    q = session.query(DB.Change).filter(DB.Change.updated == last_date)
+    last_change = q.one()
     print "Last change: " + str(last_change.number)
     print "  Updated: " + str(last_change.updated)
 
@@ -243,6 +256,20 @@ def show_change (change_no):
     for message in res.all():
         show_message_record (message)
 
+def check_change_numbers():
+    """Check change numbers.
+
+    """
+
+    q = session.query(
+        label("number", DB.Change.number),
+        label("changes", func.count(DB.Change.number)),
+        ) \
+        .filter(func.count(DB.Change.number) > 1) \
+        .group_by (DB.Change.number)
+    print q
+    print q.count()
+
 def check_upload (diff):
     """Check upload time of first revision with created time for change.
 
@@ -333,6 +360,13 @@ def check_first_revision(max):
 
     """
 
+    q = session.query(
+        label ("revision", DB.Revision.uid),
+        ) \
+        .join (DB.Change) \
+        .filter (DB.Revision.number == 1) \
+        .group_by (DB.Change.uid)
+    print "Changes with first revision: " + str(q.count())
     first = session.query(
         label ("change", DB.Revision.change_id),
         ) \
@@ -344,7 +378,7 @@ def check_first_revision(max):
         .filter (~DB.Change.uid.in_(first))
     for change in q.limit(max).all():
         print change.change
-    print "Total number of changes with no first revision: " + str(q.count())
+    print "Changes with no first revision: " + str(q.count())
     
 
 def check_status(max):
@@ -609,7 +643,9 @@ def calc_duration_changes_approvals(max):
             " (start), " + str(case.finish) + " (finish) Duration: " + \
             str(case.finish - case.start)
 
-def events_start_change(max):
+from ggplot import *
+
+def events_start_change(max, projects = None):
     """Produce a list with all change start events.
 
     Uses the time of the first revision for each change.
@@ -619,30 +655,38 @@ def events_start_change(max):
 
     max: int
         Max number of changes to consider (0 means "all").
+    projects: list of str
+        List of projects to consider. Default: None
 
     """
 
-    import pandas
+    import pandas as pd
     import numpy as np
 
     q = session.query(
         label ("date", func.min(DB.Revision.date)),
         label ("change", DB.Change.number),
         ) \
-        .join(DB.Change) \
-        .group_by(DB.Change.uid)
+        .join(DB.Change)
+    if projects is not None:
+        q = q.filter (DB.Change.project.in_(projects))
+    q = q.group_by(DB.Change.uid)
+    print q.count()
     if max != 0:
         q = q.limit(max)
     events = np.array (q.all()).transpose()
-    #print events
-    df = pandas.DataFrame (events[1], index=events[0] )
-    #print df
-    for month, values in df.groupby(lambda x: x.month):
-        print month,
-        print len(values)
-    bymonths = df.groupby(pandas.TimeGrouper(freq="M"))
-    number = bymonths.aggregate(pandas.Series.nunique)
-    print number
+    events_df = pd.DataFrame ({"date": events[0],
+                               "change": events[1]} )
+    events_ts = events_df.set_index(['date'])
+    events_bymonth = events_ts.groupby(pd.TimeGrouper(freq="M"))
+    events_bymonth_agg = events_bymonth.aggregate(pd.Series.nunique)
+    events_bymonth_agg.index.name = "month"
+    events_bymonth_agg = events_bymonth_agg.reset_index()
+    print "Number of changes per month:"
+    print events_bymonth_agg
+    print "Total number of changes: " + str(events_bymonth_agg.sum()["change"])
+    print ggplot (aes(x='month', y='change'),
+                  data=events_bymonth_agg) + geom_line()
 
 if __name__ == "__main__":
 
@@ -660,6 +704,12 @@ if __name__ == "__main__":
         show_summary()
     if args.change:
         show_change(args.change)
+    if args.projects:
+        projects = args.projects.split (",")
+    else:
+        projects = None
+    if args.check_change_numbers:
+        check_change_numbers()
     if args.check_upload:
         check_upload(int(args.check_upload))
     if args.check_first_revision:
@@ -680,4 +730,4 @@ if __name__ == "__main__":
         calc_duration_changes_approvals(
             args.calc_duration_changes_approvals)
     if args.events_start_change:
-        events_start_change(args.events_start_change)
+        events_start_change(int(args.events_start_change), projects)
