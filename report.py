@@ -74,8 +74,7 @@ def parse_args ():
                         help = "Summary of a change, given change number"
                         )
     parser.add_argument("--check_change_numbers",
-                        help = "Check change numbers.",
-                        action = "store_true"
+                        help = "Check change numbers."
                         )
     parser.add_argument("--check_upload",
                         help = "Check upload time of first revision with " + \
@@ -256,19 +255,24 @@ def show_change (change_no):
     for message in res.all():
         show_message_record (message)
 
-def check_change_numbers():
+def check_change_numbers(max):
     """Check change numbers.
 
     """
 
-    q = session.query(
+    numbers = session.query(
         label("number", DB.Change.number),
-        label("changes", func.count(DB.Change.number)),
+        label("rep", func.count(DB.Change.number)),
         ) \
-        .filter(func.count(DB.Change.number) > 1) \
-        .group_by (DB.Change.number)
-    print q
-    print q.count()
+        .group_by (DB.Change.number).subquery()
+    q = session.query(
+        label("number", numbers.c.number),
+        ) \
+        .filter(numbers.c.rep > 1)
+    print "Repeated change numbers: " + str(q.count()) + " [",
+    for number in q.limit(max).all():
+        print number.number,
+    print "]"
 
 def check_upload (diff):
     """Check upload time of first revision with created time for change.
@@ -709,7 +713,7 @@ if __name__ == "__main__":
     else:
         projects = None
     if args.check_change_numbers:
-        check_change_numbers()
+        check_change_numbers(int(args.check_change_numbers))
     if args.check_upload:
         check_upload(int(args.check_upload))
     if args.check_first_revision:
