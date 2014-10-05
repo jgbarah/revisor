@@ -32,6 +32,10 @@ from datetime import datetime, timedelta
 import argparse
 import textwrap
 
+from ggplot import *
+import pandas as pd
+import numpy as np
+
 description = """
 Simple script to produce reports with information extracted from a
 revisor Gerrit-based database.
@@ -60,6 +64,9 @@ def parse_args ():
     parser.add_argument("--projects",
                         help = "Name of projects to consider, " + \
                             "separated by comma."
+                        ) 
+    parser.add_argument("--max_results",
+                        help = "Maximum number of results"
                         ) 
     parser.add_argument("--summary",
                         help = "Summary of main stats in the database",
@@ -110,6 +117,19 @@ def parse_args ():
                         )
     parser.add_argument("--events_start_change",
                         help = "Produce a list with all change start events..",
+                        )
+    parser.add_argument("--events_submit_change",
+                        help = "Produce a list with all " \
+                            + "change submitted events.",
+                        )
+    parser.add_argument("--events_abandon_change",
+                        help = "Produce a list with all " \
+                            + "change abandoned events.",
+                        )
+    parser.add_argument("--events",
+                        help = "Produce a list with all " \
+                            + "events of specified kind " \
+                            + "('abandon','submit','start').",
                         )
     args = parser.parse_args()
     return args
@@ -647,38 +667,19 @@ def calc_duration_changes_approvals(max):
             " (start), " + str(case.finish) + " (finish) Duration: " + \
             str(case.finish - case.start)
 
-from ggplot import *
-
-def events_start_change(max, projects = None):
-    """Produce a list with all change start events.
-
-    Uses the time of the first revision for each change.
+def plot_events (events):
+    """Plot a series of events.
 
     Parameters
     ----------
 
-    max: int
-        Max number of changes to consider (0 means "all").
-    projects: list of str
-        List of projects to consider. Default: None
+    events: numpy.array
+        Events to plot, as an array composed of two lists:
+        one with the dates of the events, the other one with
+        the ids of the events.
 
     """
 
-    import pandas as pd
-    import numpy as np
-
-    q = session.query(
-        label ("date", func.min(DB.Revision.date)),
-        label ("change", DB.Change.number),
-        ) \
-        .join(DB.Change)
-    if projects is not None:
-        q = q.filter (DB.Change.project.in_(projects))
-    q = q.group_by(DB.Change.uid)
-    print q.count()
-    if max != 0:
-        q = q.limit(max)
-    events = np.array (q.all()).transpose()
     events_df = pd.DataFrame ({"date": events[0],
                                "change": events[1]} )
     events_ts = events_df.set_index(['date'])
@@ -691,6 +692,129 @@ def events_start_change(max, projects = None):
     print "Total number of changes: " + str(events_bymonth_agg.sum()["change"])
     print ggplot (aes(x='month', y='change'),
                   data=events_bymonth_agg) + geom_line()
+
+def query_start (projects = None):
+    """Produce a query for selecting chnage start events.
+
+    The query will select "date" as the date for the event, and
+    "change" for the change number.
+
+    Parameters
+    ----------
+
+    projects: list of str
+        List of projects to consider. Default: None.
+
+    Returns
+    -------
+
+    query_gerrit.query: produced query
+
+    """
+
+    q = session.query(
+        label ("date", func.min(DB.Revision.date)),
+        label ("change", DB.Change.number),
+        ) \
+        .join(DB.Change)
+    if projects is not None:
+        q = q.filter (DB.Change.project.in_(projects))
+    q = q.group_by(DB.Change.uid)
+    return q
+
+def query_submit (projects = None):
+    """Produce a query for selecting submit (ready to merge) events.
+
+    The query will select "date" as the date for the event, and
+    "change" for the change number.
+
+    Parameters
+    ----------
+
+    projects: list of str
+        List of projects to consider. Default: None.
+
+    Returns
+    -------
+
+    query_gerrit.query: produced query
+
+    """
+
+    q = session.query(
+        label ("date", func.max(DB.Approval.date)),
+        label ("change", DB.Change.uid),
+        ) \
+        .select_from(DB.Change) \
+        .join(DB.Revision) \
+        .join(DB.Approval) \
+        .filter (DB.Approval.type == "SUBM")
+    if projects is not None:
+        q = q.filter (DB.Change.project.in_(projects))
+    q = q.group_by(DB.Change.uid)
+    return q
+
+def query_abandon (projects = None):
+    """Produce a query for selecting abandon events.
+
+    The query will select "date" as the date for the event, and
+    "change" for the change number.
+
+    Parameters
+    ----------
+
+    projects: list of str
+        List of projects to consider. Default: None.
+
+    Returns
+    -------
+
+    query_gerrit.query: produced query
+
+    """
+
+    q = session.query(
+        label ("date", func.min(DB.Message.date)),
+        label ("change", DB.Change.number),
+        ) \
+        .select_from(DB.Change) \
+        .join(DB.Message) \
+        .filter (or_ (DB.Message.header == "Abandoned",
+                     DB.Message.header.like ("Patch%Abandoned")))
+    if projects is not None:
+        q = q.filter (DB.Change.project.in_(projects))
+    q = q.group_by(DB.Change.uid)
+    return q
+
+
+def events (kinds, max, projects = None):
+    """Produce a list with avents of kind kinds.
+
+    Parameters
+    ----------
+
+    kinds: list of {"abandon", "submit"}
+        Kinds of events to be produced.
+    max: int
+        Max number of changes to consider (0 means "all").
+    projects: list of str
+        List of projects to consider. Default: None
+
+    """
+
+    if "start" in kinds:
+        q = query_start (projects)
+    if "submit" in kinds:
+        q = query_submit (projects)
+    if "abandon" in kinds:
+        q = query_abandon (projects)
+    print q.count()
+    if max != 0:
+        q = q.limit(max)
+    events = np.array (q.all()).transpose()
+    print events
+    plot_events (events)
+
 
 if __name__ == "__main__":
 
@@ -712,6 +836,10 @@ if __name__ == "__main__":
         projects = args.projects.split (",")
     else:
         projects = None
+    if args.max_results:
+        max_results = args.max_results
+    else:
+        max_results = 0
     if args.check_change_numbers:
         check_change_numbers(int(args.check_change_numbers))
     if args.check_upload:
@@ -733,5 +861,6 @@ if __name__ == "__main__":
     if args.calc_duration_changes_approvals:
         calc_duration_changes_approvals(
             args.calc_duration_changes_approvals)
-    if args.events_start_change:
-        events_start_change(int(args.events_start_change), projects)
+    if args.events:
+        events(args.events, max_results, projects)
+
