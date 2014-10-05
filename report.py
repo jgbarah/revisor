@@ -115,17 +115,6 @@ def parse_args ():
     parser.add_argument("--calc_duration_changes_approvals",
                         help = "Calculate duration of changes (using approvals).",
                         )
-    parser.add_argument("--events_start_change",
-                        help = "Produce a list with all change start events..",
-                        )
-    parser.add_argument("--events_submit_change",
-                        help = "Produce a list with all " \
-                            + "change submitted events.",
-                        )
-    parser.add_argument("--events_abandon_change",
-                        help = "Produce a list with all " \
-                            + "change abandoned events.",
-                        )
     parser.add_argument("--events",
                         help = "Produce a list with all " \
                             + "events of specified kind " \
