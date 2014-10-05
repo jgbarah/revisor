@@ -97,6 +97,10 @@ def parse_args ():
                         help = "Check that changes with an 'Abandoned' " \
                             + "message are abandoned."
                         )
+    parser.add_argument("--check_abandon_cont",
+                        help = "Check changes with an 'Abandoned' " \
+                            + "but continuing with activity."
+                        )
     parser.add_argument("--check_subm",
                         help = "Check Check that changes with 'SUBM' " + \
                             "approval are closed"
@@ -462,6 +466,41 @@ def check_abandon(max):
         .filter(q_abandoned.exists())
     print q.count()
     
+def check_abandon_cont(max):
+    """Check changes with an "Abandoned" but continuing with activity.
+
+    Parameters
+    ----------
+
+    max: int
+        Max number of cases to show among those violating the check.
+
+    """
+
+    q_abandons = session.query(
+        label("id", DB.Change.uid),
+        label("date", func.min(DB.Message.date)),
+        label("num", DB.Change.number)
+        ) \
+        .select_from(DB.Change) \
+        .join(DB.Message) \
+        .filter (or_ (DB.Message.header == "Abandoned",
+                      DB.Message.header.like ("Patch%Abandoned"))) \
+        .group_by(DB.Change.uid) \
+        .subquery()
+    q = session.query(
+        label("num", q_abandons.c.num)
+        ) \
+        .join(DB.Message,
+              DB.Message.change_id == q_abandons.c.id) \
+        .filter(DB.Message.date > q_abandons.c.date) \
+        .group_by(q_abandons.c.id)
+    changes = q.count()
+    print "Changes abandoned, with activity after abandon (" \
+        + str(changes) + "): ",
+    for change in q.limit(max).all():
+        print change.num
+    print
 
 def check_subm(max):
     """Check that changes with "SUBM" approval are closed.
@@ -743,8 +782,9 @@ def query_submit (projects = None):
     q = q.group_by(DB.Change.uid)
     return q
 
-def query_abandon (projects = None):
-    """Produce a query for selecting abandon events.
+
+def query_in_header (header, projects = None):
+    """Produce a query for selecting events by finding header in messages.
 
     The query will select "date" as the date for the event, and
     "change" for the change number.
@@ -752,6 +792,8 @@ def query_abandon (projects = None):
     Parameters
     ----------
 
+    header: str
+        String to find in header of messages.
     projects: list of str
         List of projects to consider. Default: None.
 
@@ -768,8 +810,8 @@ def query_abandon (projects = None):
         ) \
         .select_from(DB.Change) \
         .join(DB.Message) \
-        .filter (or_ (DB.Message.header == "Abandoned",
-                     DB.Message.header.like ("Patch%Abandoned")))
+        .filter (or_ (DB.Message.header == header,
+                     DB.Message.header.like ("Patch%" + header)))
     if projects is not None:
         q = q.filter (DB.Change.project.in_(projects))
     q = q.group_by(DB.Change.uid)
@@ -782,7 +824,7 @@ def events (kinds, max, projects = None):
     Parameters
     ----------
 
-    kinds: list of {"abandon", "submit"}
+    kinds: list of {"start", "submit", "abandon", "restore"}
         Kinds of events to be produced.
     max: int
         Max number of changes to consider (0 means "all").
@@ -796,7 +838,11 @@ def events (kinds, max, projects = None):
     if "submit" in kinds:
         q = query_submit (projects)
     if "abandon" in kinds:
-        q = query_abandon (projects)
+        q = query_in_header ("Abandoned", projects)
+    if "restore" in kinds:
+        q = query_in_header ("Restored", projects)
+    if "revert" in kinds:
+        q = query_in_header ("Reverted", projects)
     print q.count()
     if max != 0:
         q = q.limit(max)
@@ -839,6 +885,8 @@ if __name__ == "__main__":
         check_status(int(args.check_status))
     if args.check_abandon:
         check_abandon(int(args.check_abandon))
+    if args.check_abandon_cont:
+        check_abandon_cont(int(args.check_abandon_cont))
     if args.check_subm:
         check_subm(int(args.check_subm))
     if args.show_drafts:
