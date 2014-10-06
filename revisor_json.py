@@ -114,8 +114,12 @@ class Message(Base):
     header = Column(String(100))
     message = Column(String(5000))
 
-    change = relationship ("Change", backref=backref("messages",
-                                                     order_by = uid))
+    change = relationship (
+        "Change",
+        backref=backref("messages",
+                        order_by = uid,
+                        cascade="all, delete-orphan")
+        )
 
 class Revision(Base):
     """Table for revisions.
@@ -133,8 +137,12 @@ class Revision(Base):
     date = Column(DateTime)
     isdraft = Column(Boolean)
 
-    change = relationship ("Change", backref=backref("revisions",
-                                                     order_by = uid))
+    change = relationship (
+        "Change",
+        backref=backref("revisions",
+                        order_by = uid,
+                        cascade="all, delete-orphan")
+        )
 
 class Approval(Base):
     """Table for approvals.
@@ -153,9 +161,12 @@ class Approval(Base):
     value = Column(Integer)
     date = Column(DateTime)
 
-    change = relationship ("Revision", backref=backref("approvals",
-                                                       order_by = uid))
-
+    change = relationship (
+        "Revision",
+        backref=backref("approvals",
+                        order_by = uid,
+                        cascade="all, delete-orphan")
+        )
 
 def parse_args ():
     """
