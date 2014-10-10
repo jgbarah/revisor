@@ -92,6 +92,9 @@ class Change(Base):
     created = Column(DateTime)
     updated = Column(DateTime)
     sortkey = Column(String(20))
+    owner_id = Column(Integer, ForeignKey('people.uid'))
+
+    owner = relationship ("People")
     
     def __repr__(self):
         return "<Change(project='%s', id='%s', " + \
@@ -113,6 +116,9 @@ class Message(Base):
     date = Column(DateTime)
     header = Column(String(100))
     message = Column(String(5000))
+    author_id = Column(Integer, ForeignKey('people.uid'))
+
+    author = relationship ("People")
 
     change = relationship (
         "Change",
@@ -136,6 +142,9 @@ class Revision(Base):
     revision = Column(String(50))
     date = Column(DateTime)
     isdraft = Column(Boolean)
+    author_id = Column(Integer, ForeignKey('people.uid'))
+
+    author = relationship ("People")
 
     change = relationship (
         "Change",
@@ -160,6 +169,9 @@ class Approval(Base):
     description = Column(String(20))
     value = Column(Integer)
     date = Column(DateTime)
+    author_id = Column(Integer, ForeignKey('people.uid'))
+
+    author = relationship ("People")
 
     change = relationship (
         "Revision",
@@ -167,6 +179,21 @@ class Approval(Base):
                         order_by = uid,
                         cascade="all, delete-orphan")
         )
+
+class People(Base):
+    """Table for people.
+
+    Fields describing people that are found at varios places
+    in the corresponding JSON document.
+
+    """
+
+    __tablename__ = "people"
+
+    uid = Column(Integer, primary_key=True)
+    name = Column(String(100))
+    email = Column(String(100))
+    username = Column(String(50))
 
 def parse_args ():
     """
@@ -209,6 +236,7 @@ def db_messages (message_list):
             date = datetime.fromtimestamp (int(message["timestamp"])),
             header = header,
             message = message["message"],
+            author = db_people(message["reviewer"])
             )
         message_records.append (message_record)
     return (message_records)
@@ -236,6 +264,7 @@ def db_revisions (revision_list):
             revision = revision["revision"],
             date = datetime.fromtimestamp (int(revision["createdOn"])),
             isdraft = revision["isDraft"],
+            author = db_people(revision["uploader"]),
             )
         records.append (record)
     return (records)
@@ -267,10 +296,38 @@ def db_approvals (approval_list):
             description = description,
             value = approval["value"],
             date = datetime.fromtimestamp (int(approval["grantedOn"])),
+            author = db_people(approval["by"]),
             )
         records.append (record)
     return records
     
+def db_people (person):
+    """Produce or link person (people) records.
+
+    Parameters
+    ----------
+
+    person: str
+        Person dictionary as obtained form the Gerrit JSON document.
+
+    """
+
+    q = session.query(People) \
+        .filter(People.username == person["username"])
+    if q.count() > 0:
+#        for person in q.all():
+#            print "Found person: ", person.username
+        record = q.one()
+    else:
+        record = People (
+            name = person["name"],
+            email = person["email"],
+            username = person["username"]
+            )
+        session.add (record)
+#        print "Adding person: ", record.username
+    return record
+
 def db_change (change):
     """Produce change records (and related information).
 
@@ -298,7 +355,8 @@ def db_change (change):
         status = change["status"],
         created = datetime.fromtimestamp (int(change["createdOn"]), utc),
         updated = datetime.fromtimestamp (int(change["lastUpdated"]), utc),
-        sortkey = change["sortKey"]
+        sortkey = change["sortKey"],
+        owner = db_people(change["owner"])
         )
     return change_record
             
@@ -324,6 +382,7 @@ if __name__ == "__main__":
 
     count = 0
     for line in open (args.file, "r"):
+        # Each line includes all info related to a change
         count = count + 1
         change = json.loads(line)
         print str(count) + ": " + str(change["number"]),
@@ -349,6 +408,7 @@ if __name__ == "__main__":
         else:
             print
         session.add(change_record)
+#        if count % 1000 == 0:
         if count % 1000 == 0:
             print "Comitting..."
             session.commit()
