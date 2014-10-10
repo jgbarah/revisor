@@ -77,6 +77,16 @@ def parse_args ():
                             "are to be shown.",
                         action = "store_true"
                         )
+    parser.add_argument("--plot",
+                        help = "Produce plots, when applicable.",
+                        action = "store_true"
+                        )
+    parser.add_argument("--plot_file",
+                        help = "File name to plot to, when applicable.",
+                        )
+    parser.add_argument("--period",
+                        help = "Period length: day, week, month."
+                        ) 
     parser.add_argument("--change",
                         help = "Summary of a change, given change number"
                         )
@@ -105,6 +115,11 @@ def parse_args ():
                         help = "Check Check that changes with 'SUBM' " + \
                             "approval are closed"
                         )
+    parser.add_argument("--check_events",
+                        help = "Check that evolution of events matches " \
+                            + "current situation.",
+                        action = "store_true"
+                        )
     parser.add_argument("--check_newer_dates",
                         help = "Check that all dates related to a " + \
                             "are newer than the creation date " + \
@@ -119,10 +134,15 @@ def parse_args ():
     parser.add_argument("--calc_duration_changes_approvals",
                         help = "Calculate duration of changes (using approvals).",
                         )
-    parser.add_argument("--events",
+    parser.add_argument("--show_events",
                         help = "Produce a list with all " \
                             + "events of specified kind " \
-                            + "('abandon','submit','start').",
+                            + "('start', 'submit', 'push', " \
+                            + "'abandon','restore','revert').",
+                        )
+    parser.add_argument("--show_events_byperiod",
+                        help = "Produce a list with number of " \
+                            "events by period..",
                         )
     args = parser.parse_args()
     return args
@@ -136,7 +156,15 @@ def show_summary ():
 
     q = session.query(label ("changes",
                              func.count (DB.Change.id)))
-    print "Changes: " + str(q.scalar())
+    print "Changes: " + str(q.scalar()) + " (",
+    q = session.query(
+        label ("status", DB.Change.status),
+        label ("number", func.count(DB.Change.uid))
+        ) \
+        .group_by(DB.Change.status)
+    for row in q.all():
+        print row.status + ": " + str(row.number),
+    print ")"
     q = session.query(label ("messages",
                              func.count (DB.Message.uid)))
     print "Messages: " + str(q.scalar())
@@ -597,6 +625,43 @@ def check_subm(max):
                         print str(change.num),
                     print
 
+def check_events (projects = None):
+    """Check that evolution of events matches current situation.
+
+    Parameters
+    ----------
+
+    projects: list of str
+        List of projects to consider. Default: None
+
+    """
+
+    q = query_start (projects)
+    started = q.count()
+    print "Started: " + str(started)
+    q = query_submit (projects)
+    submitted = q.count()
+    print "Submitted: " + str(submitted)
+    q = query_in_header ("Pushed", "Change has been successfully pushed%",
+                         projects)
+    pushed = q.count()
+    print "Pushed: " + str(pushed)
+    q = query_in_header ("Abandoned", "Patch%Abandoned", projects)
+    abandoned = q.count()
+    print "Abandoned: " + str(abandoned)
+    q = query_in_header ("Restored", "Patch%Restored", projects)
+    restored = q.count()
+    print "Restored: " + str(restored)
+    q = query_in_header ("Reverted", "Patch%Reverted", projects)
+    reverted = q.count()
+    print "Reverted: " + str(reverted)
+    res_merged = submitted + pushed
+    print "Resulting merged: " + str(res_merged)
+    res_abandoned = abandoned - restored
+    print "Resulting abandoned: " + str(res_abandoned)
+    print "Resulting new:" + str(
+        started - res_merged - res_abandoned)
+
 def show_drafts(max):
     """Find revisins with isdraft == True up to the number specified.
 
@@ -695,37 +760,64 @@ def calc_duration_changes_approvals(max):
             " (start), " + str(case.finish) + " (finish) Duration: " + \
             str(case.finish - case.start)
 
-def plot_events (events):
+
+def plot_events_byperiod (byperiod, filename = None):
     """Plot a series of events.
 
     Parameters
     ----------
 
-    events: numpy.array
-        Events to plot, as an array composed of two lists:
-        one with the dates of the events, the other one with
-        the ids of the events.
+    byperiod: panda.timeseries
+        Events to plot, as a timeseries dataframe with three columns:
+        period (as starting date), event name, number of events.
+    filename: str
+        File name to plot to. (Default: None, means plot online).
 
     """
 
-    events_df = pd.DataFrame ({"date": events[0],
-                               "change": events[1]} )
-    events_ts = events_df.set_index(['date'])
-    events_bymonth = events_ts.groupby(pd.TimeGrouper(freq="M"))
-    events_bymonth_agg = events_bymonth.aggregate(pd.Series.nunique)
-    events_bymonth_agg.index.name = "month"
-    events_bymonth_agg = events_bymonth_agg.reset_index()
-    print "Number of changes per month:"
-    print events_bymonth_agg
-    print "Total number of changes: " + str(events_bymonth_agg.sum()["change"])
-    print ggplot (aes(x='month', y='change'),
-                  data=events_bymonth_agg) + geom_line()
+    chart = ggplot (aes(x='date', y='change', color='event'),
+                  data=byperiod) \
+                  + geom_line() \
+                  + labs("Date", "Number of events")
+    if filename is None:
+        print chart
+    else:
+        ggsave (filename, chart)
+
+def query_create (projects = None):
+    """Produce a query for selecting change cretae events.
+
+    The query will select "date" as the date for the event, and
+    "change" for the change number. The date is the "created"
+    field for the change.
+
+    Parameters
+    ----------
+
+    projects: list of str
+        List of projects to consider. Default: None.
+
+    Returns
+    -------
+
+    query_gerrit.query: produced query
+
+    """
+
+    q = session.query(
+        label ("date", DB.Change.created),
+        label ("change", DB.Change.number),
+        )
+    if projects is not None:
+        q = q.filter (DB.Change.project.in_(projects))
+    return q
 
 def query_start (projects = None):
     """Produce a query for selecting chnage start events.
 
     The query will select "date" as the date for the event, and
-    "change" for the change number.
+    "change" for the change number. The date is calculated as
+    the date of the first revision.
 
     Parameters
     ----------
@@ -782,8 +874,8 @@ def query_submit (projects = None):
     q = q.group_by(DB.Change.uid)
     return q
 
-
-def query_in_header (header, projects = None):
+def query_in_header (header, like_header,
+                     projects = None, unique = False):
     """Produce a query for selecting events by finding header in messages.
 
     The query will select "date" as the date for the event, and
@@ -793,9 +885,14 @@ def query_in_header (header, projects = None):
     ----------
 
     header: str
-        String to find in header of messages.
+        String to find (exactly) in header of messages.
+    like_header: str
+        String to find (using like) in header of messages.
     projects: list of str
         List of projects to consider. Default: None.
+    unique: bool
+        Consider only unique changes (count as one if a change has
+        several abandoned.
 
     Returns
     -------
@@ -804,51 +901,194 @@ def query_in_header (header, projects = None):
 
     """
 
-    q = session.query(
-        label ("date", func.min(DB.Message.date)),
-        label ("change", DB.Change.number),
-        ) \
-        .select_from(DB.Change) \
+    if unique:
+        q = session.query(
+            label ("date", func.min(DB.Message.date)),
+            label ("change", DB.Change.number),
+            )
+    else:
+        q = session.query(
+            label ("date", DB.Message.date),
+            label ("change", DB.Change.number),
+            )
+    q = q.select_from(DB.Change) \
         .join(DB.Message) \
         .filter (or_ (DB.Message.header == header,
-                     DB.Message.header.like ("Patch%" + header)))
+                      DB.Message.header.like (like_header)))
     if projects is not None:
         q = q.filter (DB.Change.project.in_(projects))
-    q = q.group_by(DB.Change.uid)
+    if unique:
+        q = q.group_by(DB.Change.uid)
     return q
 
+def query_revisions (projects = None):
+    """Produce a query for selecting new revision events.
 
-def events (kinds, max, projects = None):
-    """Produce a list with avents of kind kinds.
+    The query will select "date" in revision record as the date
+    for the event, and "change" for the change number.
 
     Parameters
     ----------
 
-    kinds: list of {"start", "submit", "abandon", "restore"}
+    projects: list of str
+        List of projects to consider. Default: None.
+
+    """
+
+    q = session.query(
+        label ("date", DB.Revision.date),
+        label ("change", DB.Change.number),
+        )
+    q = q.select_from(DB.Revision) \
+        .join(DB.Change)
+    if projects is not None:
+        q = q.filter (DB.Change.project.in_(projects))
+    return q
+
+def get_events (kinds, max, projects = None):
+    """Get a dataframe with avents of kind kinds.
+
+    Parameters
+    ----------
+
+    kinds: list of {"start", "submit", "push", "abandon", "restore", "revert"}
         Kinds of events to be produced.
     max: int
         Max number of changes to consider (0 means "all").
     projects: list of str
         List of projects to consider. Default: None
 
+    Returns
+    -------
+
+    pandas.dataframe: Events
+        Dataframe with columns "date" (datetime), "change"
+        (change number), "event" (str, kind of event).
+
     """
 
+    queries = {}
+    if "create" in kinds:
+        queries["create"] = query_create (projects)
     if "start" in kinds:
-        q = query_start (projects)
+        queries["start"] = query_start (projects)
     if "submit" in kinds:
-        q = query_submit (projects)
+        queries["submit"] = query_submit (projects)
+    if "push" in kinds:
+        queries["push"] = query_in_header (
+            "Change has been successfully pushed%",
+            projects)
     if "abandon" in kinds:
-        q = query_in_header ("Abandoned", projects)
+        queries["abandon"] = query_in_header ("Abandoned", 
+                                              "Patch%Abandoned", projects)
     if "restore" in kinds:
-        q = query_in_header ("Restored", projects)
+        queries["restore"] = query_in_header ("Restored",
+                                              "Patch%Restored", projects)
     if "revert" in kinds:
-        q = query_in_header ("Reverted", projects)
-    print q.count()
-    if max != 0:
-        q = q.limit(max)
-    events = np.array (q.all()).transpose()
-    print events
-    plot_events (events)
+        queries["revert"] = query_in_header ("Reverted",
+                                             "Patch%Reverted", projects)
+    if "revision" in kinds:
+        queries["revision"] = query_revisions (projects)
+    event_list = []
+    for kind in queries:
+        # Add limit to query, query, add kind column
+        if max != 0:
+            queries[kind] = queries[kind].limit(max)
+        for date, change in queries[kind]:
+            event_list.append( [date, change, kind] )
+    events_df = pd.DataFrame.from_records (
+        event_list,
+        columns = ["date", "change", "event"]
+        )
+    return events_df
+
+def get_events_byperiod (events_df, period = "month"):
+    """Get a pandas timeseries with avents per period.
+
+    Parameters
+    ----------
+
+    events_df: pandas.dataframe
+        Events to group by period. It is a dataframe with the
+        following columns: "date" (datetime), "change"
+        (change number), "event" (str, kind of event).
+    period: { "day", "week", "month" }
+        Length of period (Default: "month").
+
+    Returns
+    -------
+
+    pandas.timeseries: Number of events per period
+        Pandas grouped object.
+
+    """
+
+    if period == "month":
+        freq = 'M'
+    elif period == "day":
+        freq = 'D'
+    elif period == "week":
+        freq = 'W'
+    ts = events_df.set_index(['date'])
+    byperiod = ts.groupby([pd.TimeGrouper(freq=freq), "event"],
+                          as_index=False)
+    byperiod_agg = byperiod.aggregate(len)
+    return byperiod_agg
+
+def show_events (kinds, max, projects = None,
+                 plot = False, plot_file = False):
+    """Produce a list with avents of kind kinds.
+
+    Parameters
+    ----------
+
+    kinds: list of {"start", "submit", "push", "abandon", "restore", "revert"}
+        Kinds of events to be produced.
+    max: int
+        Max number of changes to consider (0 means "all").
+    projects: list of str
+        List of projects to consider. Default: None
+    plot_file: str
+        file name to plot to (Default: None, means plot online)
+
+    """
+
+    events_df = get_events (kinds, max, projects)
+    print events_df
+    if plot:
+        plot_events_all(events_df, plot_file)
+    #grouped = event_df.groupby("event")
+    # for name, group in grouped:
+    #     plot_events(group)
+
+def show_events_byperiod (kinds, max, projects = None,
+                          plot = False, plot_file = None,
+                          period = "month"):
+    """Produce a list with number of events by period.
+
+    Parameters
+    ----------
+
+    kinds: list of {"start", "submit", "push", "abandon", "restore", "revert"}
+        Kinds of events to be produced.
+    max: int
+        Max number of changes to consider (0 means "all").
+    projects: list of str
+        List of projects to consider. Default: None.
+    plot_file: str
+        File name to plot to (Default: None, means plot online).
+    period: { "day", "week", "month" }
+        Length of period (Default: "month").
+
+    """
+
+    events_df = get_events (kinds, max, projects)
+    byperiod = get_events_byperiod (events_df, period)
+    print byperiod
+    print "Total number of changes: " + str(byperiod.sum()["change"])
+    if plot:
+        plot_events_byperiod(byperiod, plot_file)
+
 
 
 if __name__ == "__main__":
@@ -875,6 +1115,18 @@ if __name__ == "__main__":
         max_results = args.max_results
     else:
         max_results = 0
+    if args.plot:
+        plot = True
+    else:
+        plot = False
+    if args.plot_file:
+        plot_file = args.plot_file
+    else:
+        plot_file = None
+    if args.period:
+        period = args.period
+    else:
+        period = "month"
     if args.check_change_numbers:
         check_change_numbers(int(args.check_change_numbers))
     if args.check_upload:
@@ -889,6 +1141,8 @@ if __name__ == "__main__":
         check_abandon_cont(int(args.check_abandon_cont))
     if args.check_subm:
         check_subm(int(args.check_subm))
+    if args.check_events:
+        check_events(projects)
     if args.show_drafts:
         show_drafts(args.show_drafts)
     if args.check_newer_dates:
@@ -898,6 +1152,11 @@ if __name__ == "__main__":
     if args.calc_duration_changes_approvals:
         calc_duration_changes_approvals(
             args.calc_duration_changes_approvals)
-    if args.events:
-        events(args.events, max_results, projects)
+    if args.show_events:
+        show_events(args.show_events,
+                    max_results, projects, plot, plot_file)
+    if args.show_events_byperiod:
+        show_events_byperiod(args.show_events_byperiod,
+                             max_results, projects, plot, plot_file,
+                             period)
 
