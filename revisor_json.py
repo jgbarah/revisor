@@ -38,6 +38,9 @@ from sqlalchemy.orm import relationship, backref
 
 # To properly support utf8mb4 in SQLAlchemy
 # http://blog.bbdouglas.com/unicode-surrogate-characters-and-lamp/
+# Important: Create database with (being `revisor_test` the schema name):
+# CREATE SCHEMA `revisor_test` DEFAULT CHARACTER SET utf8mb4 ;
+
 import encodings
 encodings._aliases["utf8mb4"] = "utf_8"
 
@@ -195,6 +198,8 @@ class People(Base):
     email = Column(String(100))
     username = Column(String(50))
 
+#    __table_args__ = { mysql_charset='utf8mb4' }
+
 def parse_args ():
     """
     Parse command line arguments
@@ -312,17 +317,33 @@ def db_people (person):
 
     """
 
+#    print person
+    if "name" in person:
+        name = person["name"]
+    else:
+        name = None
+    if "email" in person:
+        email = person["email"]
+    else:
+        email = None
+    if "username" in person:
+        username = person["username"]
+    else:
+        username = None
     q = session.query(People) \
-        .filter(People.username == person["username"])
+        .filter(People.name == name,
+                People.email == email,
+                People.username == username)
     if q.count() > 0:
 #        for person in q.all():
 #            print "Found person: ", person.username
         record = q.one()
     else:
+#        print person
         record = People (
-            name = person["name"],
-            email = person["email"],
-            username = person["username"]
+            name = name,
+            email = email,
+            username = username
             )
         session.add (record)
 #        print "Adding person: ", record.username
@@ -371,7 +392,8 @@ if __name__ == "__main__":
     trailer = "?charset=utf8mb4&use_unicode=0"
     database = database + trailer
 
-    engine = create_engine(database, echo=False)
+#    engine = create_engine(database, echo=False, encoding='utf8')
+    engine = create_engine(database, echo=False, encoding='utf8mb4')
     
     Base.metadata.drop_all(engine) 
     Base.metadata.create_all(engine) 
