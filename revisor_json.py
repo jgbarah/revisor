@@ -215,6 +215,10 @@ def parse_args ():
                         help = "SQLAlchemy url of the database " + \
                             "to write the data to."
                         )
+    parser.add_argument("--createdb",
+                        help = "Create database if it does not exist.",
+                        action = "store_true"
+                        )
     args = parser.parse_args()
     return args
 
@@ -387,6 +391,16 @@ if __name__ == "__main__":
     args = parse_args()
 
     from sqlalchemy import create_engine
+
+    if args.createdb:
+        # To create database, we need a SQLAlchemy url for the database
+        # without schema name, since we have to connect to it to create
+        # the schema.
+        (db, schema) = args.database.rsplit ('/', 1)
+        dbengine = create_engine(db, echo=False, encoding='utf8mb4')
+        dbengine.execute ("CREATE DATABASE IF NOT EXISTS " + schema \
+                            + " DEFAULT CHARACTER SET utf8mb4")
+
     database = args.database
 #    trailer = "?charset=utf8&use_unicode=0"
     trailer = "?charset=utf8mb4&use_unicode=0"
@@ -394,7 +408,7 @@ if __name__ == "__main__":
 
 #    engine = create_engine(database, echo=False, encoding='utf8')
     engine = create_engine(database, echo=False, encoding='utf8mb4')
-    
+
     Base.metadata.drop_all(engine) 
     Base.metadata.create_all(engine) 
 
