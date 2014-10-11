@@ -334,15 +334,22 @@ def db_people (person):
         username = person["username"]
     else:
         username = None
-    q = session.query(People) \
-        .filter(People.name == name,
-                People.email == email,
-                People.username == username)
-    if q.count() > 0:
+    # q = session.query(People) \
+    #     .filter(People.name == name,
+    #             People.email == email,
+    #             People.username == username)
+    # if q.count() > 0:
 #        for person in q.all():
 #            print "Found person: ", person.username
-        record = q.one()
-    else:
+    #    record = q.one()
+    q = session.query(People) \
+        .filter(People.name == name)
+    record = None
+    for person in q.all():
+        if (person.email == email) and (person.username == username):
+            record = person
+            break
+    if record is None:
 #        print person
         record = People (
             name = name,
