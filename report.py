@@ -976,6 +976,7 @@ def get_events (kinds, max, projects = None):
         queries["submit"] = query_submit (projects)
     if "push" in kinds:
         queries["push"] = query_in_header (
+            "Pushed",
             "Change has been successfully pushed%",
             projects)
     if "abandon" in kinds:

@@ -84,9 +84,9 @@ class Change(Base):
 
     uid = Column(Integer, primary_key=True)
     id = Column(String(300))
-    project = Column(String(100))
+    project = Column(String(100), index=True)
     branch = Column(String(50))
-    number = Column(Integer)
+    number = Column(Integer, index=True)
     subject = Column(String(200))
     topic = Column(String(50))
     url = Column(String(100))
@@ -117,7 +117,7 @@ class Message(Base):
     uid = Column(Integer, primary_key=True)
     change_id = Column(Integer, ForeignKey('changes.uid'))
     date = Column(DateTime)
-    header = Column(String(100))
+    header = Column(String(100), index=True)
     message = Column(String(5000))
     author_id = Column(Integer, ForeignKey('people.uid'))
 
@@ -194,9 +194,9 @@ class People(Base):
     __tablename__ = "people"
 
     uid = Column(Integer, primary_key=True)
-    name = Column(String(100))
-    email = Column(String(100))
-    username = Column(String(50))
+    name = Column(String(100), index=True)
+    email = Column(String(100), index=True)
+    username = Column(String(50), index=True)
 
 #    __table_args__ = { mysql_charset='utf8mb4' }
 
@@ -430,7 +430,6 @@ if __name__ == "__main__":
         else:
             print
         session.add(change_record)
-#        if count % 1000 == 0:
         if count % 1000 == 0:
             print "Comitting..."
             session.commit()
