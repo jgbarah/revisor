@@ -60,7 +60,13 @@ class DB (GrimoireDatabase):
         DB.Change = GrimoireDatabase._table (
             bases = (self.Base,), name = 'Change',
             tablename = 'changes',
-            schemaname = self.schema)
+            schemaname = self.schema,
+            columns = dict (
+                owner_id = Column(
+                    Integer,
+                    ForeignKey(self.schema + '.' + 'people.uid')
+                    ),
+                ))
 
         DB.Message = GrimoireDatabase._table (
             bases = (self.Base,), name = 'Message',
@@ -70,6 +76,10 @@ class DB (GrimoireDatabase):
                 change_id = Column(
                     Integer,
                     ForeignKey(self.schema + '.' + 'changes.uid')
+                    ),
+                author_id = Column(
+                    Integer,
+                    ForeignKey(self.schema + '.' + 'people.uid')
                     ),
                 ))
 
@@ -82,6 +92,10 @@ class DB (GrimoireDatabase):
                     Integer,
                     ForeignKey(self.schema + '.' + 'changes.uid')
                     ),
+                author_id = Column(
+                    Integer,
+                    ForeignKey(self.schema + '.' + 'people.uid')
+                    ),
                 ))
 
         DB.Approval = GrimoireDatabase._table (
@@ -93,7 +107,17 @@ class DB (GrimoireDatabase):
                     Integer,
                     ForeignKey(self.schema + '.' + 'revisions.uid')
                     ),
+                author_id = Column(
+                    Integer,
+                    ForeignKey(self.schema + '.' + 'people.uid')
+                    ),
                 ))
+
+        DB.People = GrimoireDatabase._table (
+            bases = (self.Base,), name = 'People',
+            tablename = 'people',
+            schemaname = self.schema,
+            )
 
 class Query (GrimoireQuery):
     """Class for dealing with Gerrit-related queries"""

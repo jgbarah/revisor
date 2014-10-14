@@ -198,8 +198,6 @@ class People(Base):
     email = Column(String(100), index=True)
     username = Column(String(50), index=True)
 
-#    __table_args__ = { mysql_charset='utf8mb4' }
-
 def parse_args ():
     """
     Parse command line arguments

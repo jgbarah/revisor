@@ -65,11 +65,35 @@ def parse_args ():
                         help = "Name of projects to consider, " + \
                             "separated by comma."
                         ) 
+    parser.add_argument("--branches",
+                        help = "Name of branches to consider, " + \
+                            "separated by comma."
+                        ) 
+    parser.add_argument("--owners",
+                        help = "Name of change owners to consider, " + \
+                            "separated by comma."
+                        )
+    parser.add_argument("--no_owners",
+                        help = "Name of change owners to filter out, " + \
+                            "separated by comma."
+                        )
+    parser.add_argument("--since",
+                        help = "Only changes starting since date, " \
+                            + "in format 2014-10-29."
+                        )
+    parser.add_argument("--until",
+                        help = "Only changes starting until date, " \
+                            + "in format 2014-10-29."
+                        )
     parser.add_argument("--max_results",
                         help = "Maximum number of results"
                         ) 
     parser.add_argument("--summary",
-                        help = "Summary of main stats in the database",
+                        help = "Summary of main stats in the database.",
+                        action = "store_true"
+                        )
+    parser.add_argument("--summary_projects",
+                        help = "Summary of main stats by projects.",
                         action = "store_true"
                         )
     parser.add_argument("--full_messages",
@@ -144,6 +168,10 @@ def parse_args ():
                         help = "Produce a list with number of " \
                             "events by period..",
                         )
+    parser.add_argument("--show_start_end",
+                        help = "Show start and end for changes.",
+                        action = "store_true"
+                        )
     args = parser.parse_args()
     return args
 
@@ -188,6 +216,19 @@ def show_summary ():
     last_change = q.one()
     print "Last change: " + str(last_change.number)
     print "  Updated: " + str(last_change.updated)
+
+def show_summary_projects ():
+    """Summary of main stats by project (and name of projects).
+
+    """
+
+    q = session.query (label ("project", DB.Change.project),
+                       label ("changes", func.count(DB.Change.uid))
+                       ) \
+                       .group_by(DB.Change.project) \
+                       .order_by(desc("changes"))
+    for project, changes in q.all():
+        print project + ": " + str(changes)
 
 def show_change_record (change):
     """Show a change record.
@@ -784,18 +825,12 @@ def plot_events_byperiod (byperiod, filename = None):
     else:
         ggsave (filename, chart)
 
-def query_create (projects = None):
-    """Produce a query for selecting change cretae events.
+def query_create ():
+    """Produce a query for selecting change create events.
 
     The query will select "date" as the date for the event, and
     "change" for the change number. The date is the "created"
     field for the change.
-
-    Parameters
-    ----------
-
-    projects: list of str
-        List of projects to consider. Default: None.
 
     Returns
     -------
@@ -808,11 +843,9 @@ def query_create (projects = None):
         label ("date", DB.Change.created),
         label ("change", DB.Change.number),
         )
-    if projects is not None:
-        q = q.filter (DB.Change.project.in_(projects))
     return q
 
-def query_start (projects = None):
+def query_start (changes = None):
     """Produce a query for selecting chnage start events.
 
     The query will select "date" as the date for the event, and
@@ -822,8 +855,8 @@ def query_start (projects = None):
     Parameters
     ----------
 
-    projects: list of str
-        List of projects to consider. Default: None.
+    changes: list of int
+        List of change numbers to consider.
 
     Returns
     -------
@@ -837,22 +870,16 @@ def query_start (projects = None):
         label ("change", DB.Change.number),
         ) \
         .join(DB.Change)
-    if projects is not None:
-        q = q.filter (DB.Change.project.in_(projects))
     q = q.group_by(DB.Change.uid)
+    if changes is not None:
+        q = q.filter(DB.Change.number.in_(changes))
     return q
 
-def query_submit (projects = None):
+def query_submit ():
     """Produce a query for selecting submit (ready to merge) events.
 
     The query will select "date" as the date for the event, and
     "change" for the change number.
-
-    Parameters
-    ----------
-
-    projects: list of str
-        List of projects to consider. Default: None.
 
     Returns
     -------
@@ -863,19 +890,17 @@ def query_submit (projects = None):
 
     q = session.query(
         label ("date", func.max(DB.Approval.date)),
-        label ("change", DB.Change.uid),
+        label ("change", DB.Change.number),
         ) \
         .select_from(DB.Change) \
         .join(DB.Revision) \
         .join(DB.Approval) \
         .filter (DB.Approval.type == "SUBM")
-    if projects is not None:
-        q = q.filter (DB.Change.project.in_(projects))
     q = q.group_by(DB.Change.uid)
     return q
 
 def query_in_header (header, like_header,
-                     projects = None, unique = False):
+                     unique = False):
     """Produce a query for selecting events by finding header in messages.
 
     The query will select "date" as the date for the event, and
@@ -888,8 +913,6 @@ def query_in_header (header, like_header,
         String to find (exactly) in header of messages.
     like_header: str
         String to find (using like) in header of messages.
-    projects: list of str
-        List of projects to consider. Default: None.
     unique: bool
         Consider only unique changes (count as one if a change has
         several abandoned.
@@ -915,23 +938,15 @@ def query_in_header (header, like_header,
         .join(DB.Message) \
         .filter (or_ (DB.Message.header == header,
                       DB.Message.header.like (like_header)))
-    if projects is not None:
-        q = q.filter (DB.Change.project.in_(projects))
     if unique:
         q = q.group_by(DB.Change.uid)
     return q
 
-def query_revisions (projects = None):
+def query_revisions ():
     """Produce a query for selecting new revision events.
 
     The query will select "date" in revision record as the date
     for the event, and "change" for the change number.
-
-    Parameters
-    ----------
-
-    projects: list of str
-        List of projects to consider. Default: None.
 
     """
 
@@ -941,11 +956,11 @@ def query_revisions (projects = None):
         )
     q = q.select_from(DB.Revision) \
         .join(DB.Change)
-    if projects is not None:
-        q = q.filter (DB.Change.project.in_(projects))
     return q
 
-def get_events (kinds, max, projects = None):
+def get_events (kinds, max, projects = None, branches = None,
+                owners = None, no_owners = None,
+                since = None, until = None):
     """Get a dataframe with avents of kind kinds.
 
     Parameters
@@ -957,6 +972,16 @@ def get_events (kinds, max, projects = None):
         Max number of changes to consider (0 means "all").
     projects: list of str
         List of projects to consider. Default: None
+    branches: list of str
+        List of branches to consider. Default: None.
+    owners: list of str
+        List of owners to consider. Default: None.
+    no_owners: list of str
+        List of owners to filter out. Default: None.
+    since: datetime
+        Only changes starting later than since. Default: None.
+    until: datetime
+        Only changes starting before until. Default: None.
 
     Returns
     -------
@@ -969,29 +994,49 @@ def get_events (kinds, max, projects = None):
 
     queries = {}
     if "create" in kinds:
-        queries["create"] = query_create (projects)
+        queries["create"] = query_create ()
     if "start" in kinds:
-        queries["start"] = query_start (projects)
+        queries["start"] = query_start ()
     if "submit" in kinds:
-        queries["submit"] = query_submit (projects)
+        queries["submit"] = query_submit ()
     if "push" in kinds:
         queries["push"] = query_in_header (
             "Pushed",
-            "Change has been successfully pushed%",
-            projects)
+            "Change has been successfully pushed%")
     if "abandon" in kinds:
         queries["abandon"] = query_in_header ("Abandoned", 
-                                              "Patch%Abandoned", projects)
+                                              "Patch%Abandoned")
     if "restore" in kinds:
         queries["restore"] = query_in_header ("Restored",
-                                              "Patch%Restored", projects)
+                                              "Patch%Restored")
     if "revert" in kinds:
         queries["revert"] = query_in_header ("Reverted",
-                                             "Patch%Reverted", projects)
+                                             "Patch%Reverted")
     if "revision" in kinds:
-        queries["revision"] = query_revisions (projects)
+        queries["revision"] = query_revisions ()
     event_list = []
     for kind in queries:
+        # Add owners to query
+        if owners is not None:
+            q_owners = session.query (DB.People.uid) \
+                .filter (DB.People.username.in_(owners))
+            owner_ids = [id for (id, ) in q_owners.all()]
+            queries[kind] = queries[kind].filter (
+                DB.Change.owner_id.in_(owner_ids))
+        elif no_owners is not None:
+            q_no_owners = session.query (DB.People.uid) \
+                .filter (DB.People.username.in_(no_owners))
+            no_owner_ids = [id for (id, ) in q_no_owners.all()]
+            queries[kind] = queries[kind].filter (
+                ~DB.Change.owner_id.in_(no_owner_ids))
+        # Add projects to query
+        if projects is not None:
+            queries[kind] = queries[kind].filter (
+                DB.Change.project.in_(projects))
+        # Add branches to query
+        if branches is not None:
+            queries[kind] = queries[kind].filter (
+                DB.Change.branch.in_(branches))
         # Add limit to query, query, add kind column
         if max != 0:
             queries[kind] = queries[kind].limit(max)
@@ -1001,10 +1046,23 @@ def get_events (kinds, max, projects = None):
         event_list,
         columns = ["date", "change", "event"]
         )
+    if (since is not None) or (until is not None):
+        # Get all start events
+        start_q = query_start(events_df["change"].unique())
+        start_df = pd.DataFrame.from_records (
+            start_q.all(),
+            columns = ["date", "change"]
+            )
+        if since is not None:
+            start_df = start_df[start_df["date"] >= since]
+        if until is not None:
+            start_df = start_df[start_df["date"] < until]
+        events_df = events_df[events_df["change"].isin(start_df["change"])]
+    # print events_df
     return events_df
 
 def get_events_byperiod (events_df, period = "month"):
-    """Get a pandas timeseries with avents per period.
+    """Get a pandas timeseries with events per period.
 
     Parameters
     ----------
@@ -1030,15 +1088,82 @@ def get_events_byperiod (events_df, period = "month"):
         freq = 'D'
     elif period == "week":
         freq = 'W'
-    ts = events_df.set_index(['date'])
-    byperiod = ts.groupby([pd.TimeGrouper(freq=freq), "event"],
-                          as_index=False)
-    byperiod_agg = byperiod.aggregate(len)
-    return byperiod_agg
+    byperiod = events_df.set_index('date') \
+        .groupby([pd.TimeGrouper(freq=freq), "event"],
+                 as_index=False) \
+        .aggregate(len)
+    return byperiod
 
-def show_events (kinds, max, projects = None,
+def change_start_end (events):
+    """Produce a (start, end) list for the events of a change.
+
+    Parameters
+    ----------
+
+    events: pandas.DataFrame
+        Each row contains an event as "date" (datetime), "change"
+        (int, change number), and "event" (str, kind of event).
+
+    Returns
+    -------
+
+    datetime: start of the change.
+    datetime: end of the change (None if still not finished).
+
+    """
+
+    events = events.sort("date")
+#    print "Events: \n", events
+    start = None
+    end = None
+    reason = None
+    for i, row in events.iterrows():
+        if start is None:
+            if row ["event"] == "start":
+                start = row ["date"]
+        elif row ["event"] in ["submit", "push", "abandon"]:
+            end = row ["date"]
+            reason = row ["event"]
+            break
+    if start is not None and end is not None:
+        diff = end - start
+        duration = (diff.seconds + diff.days * 86400 ) / 3600
+    else:
+        duration = None
+    return pd.DataFrame( {"start": [start], "end": [end],
+                          "duration": [duration], "reason": reason})
+
+def get_start_end (events_df):
+    """Get a dataframe with start and end times per change.
+
+    The dataframe has fields "change" (change number), "start"
+    (datetime, start of the change), "end" (datetime, end of the change).
+    For "start", the "start" event will be considered (first upload).
+    For "end", the first "submit", "push" or "abandon" will be considered.
+
+    Parameters
+    ----------
+
+    events_df: pandas.dateframe
+        Events for all changes, including at least "start", "submit",
+        "push" and "abandon". Columns are "change", "date", and "event".
+
+    Returns
+    -------
+
+    pandas.dateframe: start and end times (datetime) per change.
+        Columns of the dataframe: "change", "start", "end".
+
+    """
+
+    bychange = events_df.groupby("change")
+    start_end = bychange.apply(change_start_end)
+    return start_end
+
+def show_events (kinds, max, projects = None, branches = None,
+                 no_owners = None, owners = None,
                  plot = False, plot_file = False):
-    """Produce a list with avents of kind kinds.
+    """Produce a list with events of kind kinds.
 
     Parameters
     ----------
@@ -1049,20 +1174,27 @@ def show_events (kinds, max, projects = None,
         Max number of changes to consider (0 means "all").
     projects: list of str
         List of projects to consider. Default: None
+    branches: list of str
+        List of branches to consider. Default: None.
+    owners: list of str
+        List of owners to consider. Default: None.
+    no_owners: list of str
+        List of owners to filter out. Default: None.
+    plot: bool
+        Plot results in a chart (Default: False)
     plot_file: str
-        file name to plot to (Default: None, means plot online)
+        File name to plot to (Default: None, means plot online)
 
     """
 
-    events_df = get_events (kinds, max, projects)
+    events_df = get_events (kinds, max, projects, branches, owners, no_owners)
     print events_df
     if plot:
         plot_events_all(events_df, plot_file)
-    #grouped = event_df.groupby("event")
-    # for name, group in grouped:
-    #     plot_events(group)
 
-def show_events_byperiod (kinds, max, projects = None,
+def show_events_byperiod (kinds, max, projects = None, branches = None,
+                          owners = None, no_owners = None,
+                          since = None, until = None,
                           plot = False, plot_file = None,
                           period = "month"):
     """Produce a list with number of events by period.
@@ -1076,6 +1208,18 @@ def show_events_byperiod (kinds, max, projects = None,
         Max number of changes to consider (0 means "all").
     projects: list of str
         List of projects to consider. Default: None.
+    branches: list of str
+        List of branches to consider. Default: None.
+    owners: list of str
+        List of owners to consider. Default: None.
+    no_owners: list of str
+        List of owners to filter out. Default: None.
+    since: datetime
+        Only changes starting later than since. Default: None.
+    until: datetime
+        Only changes starting before until. Default: None.
+    plot: bool
+        Plot results in a chart (Default: False)
     plot_file: str
         File name to plot to (Default: None, means plot online).
     period: { "day", "week", "month" }
@@ -1083,13 +1227,49 @@ def show_events_byperiod (kinds, max, projects = None,
 
     """
 
-    events_df = get_events (kinds, max, projects)
+    events_df = get_events (kinds, max, projects, branches, owners, no_owners, since = since, until = until)
     byperiod = get_events_byperiod (events_df, period)
     print byperiod
     print "Total number of changes: " + str(byperiod.sum()["change"])
     if plot:
         plot_events_byperiod(byperiod, plot_file)
 
+def show_start_end (max, projects = None, branches = None,
+                    owners = None, no_owners = None,
+                    since = None, until = None,
+                    plot = False, plot_file = False):
+    """Show start and end for changes.
+
+    Parameters
+    ----------
+
+    max: int
+        Max number of changes to consider (0 means "all").
+    projects: list of str
+        List of projects to consider. Default: None.
+    branches: list of str
+        List of branches to consider. Default: None.
+    owners: list of str
+        List of owners to consider. Default: None.
+    no_owners: list of str
+        List of owners to filter out. Default: None.
+    since: datetime
+        Only changes starting later than since. Default: None.
+    until: datetime
+        Only changes starting before until. Default: None.
+    plot: bool
+        Plot results in a chart. Default: False.
+    plot_file: str
+        file name to plot to. Default: None, means plot online.
+
+    """
+
+    events = get_events (["start", "submit", "push", "abandon"], max,
+                         projects, branches, owners, no_owners,
+                         since = since, until = until)
+    start_end = get_start_end (events)
+    print start_end
+    print start_end.describe()
 
 
 if __name__ == "__main__":
@@ -1106,12 +1286,35 @@ if __name__ == "__main__":
 
     if args.summary:
         show_summary()
+    if args.summary_projects:
+        show_summary_projects()
     if args.change:
         show_change(args.change)
     if args.projects:
         projects = args.projects.split (",")
     else:
         projects = None
+    if args.branches:
+        branches = args.branches.split (",")
+    else:
+        branches = None
+    if args.owners:
+        owners = args.owners.split (",")
+    else:
+        owners = None
+    if args.no_owners:
+        no_owners = args.no_owners.split (",")
+    else:
+        no_owners = None
+    if args.since:
+        since = datetime.strptime(args.since, "%Y-%m-%d")
+        print since
+    else:
+        since = None
+    if args.until:
+        until = datetime.strptime(args.until, "%Y-%m-%d")
+    else:
+        until = None
     if args.max_results:
         max_results = args.max_results
     else:
@@ -1158,6 +1361,13 @@ if __name__ == "__main__":
                     max_results, projects, plot, plot_file)
     if args.show_events_byperiod:
         show_events_byperiod(args.show_events_byperiod,
-                             max_results, projects, plot, plot_file,
-                             period)
-
+                             max_results,
+                             projects, branches, owners, no_owners,
+                             since = since, until = until,
+                             plot = plot, plot_file = plot_file,
+                             period = period)
+    if args.show_start_end:
+        show_start_end(max_results,
+                       projects, branches, owners, no_owners,
+                       since = since, until = until,
+                       plot = plot, plot_file = plot_file)
